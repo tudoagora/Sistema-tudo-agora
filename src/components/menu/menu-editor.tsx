@@ -31,8 +31,8 @@ import {
   deleteOptionValue,
   deleteProduct,
   linkProductToOptionGroup,
-  moveMenuSection,
   moveProduct,
+  reorderMenuSections,
   reorderOptionGroups,
   reorderOptionValues,
   toggleMenuSection,
@@ -159,6 +159,35 @@ function ArrowButton({
         <span aria-hidden="true">{glyph}</span>
       </button>
     </form>
+  );
+}
+
+/**
+ * Seta ↑ ↓ que reordena pela posição na lista, e não por um par de ids.
+ *
+ * Não é `<form action>`: a reordenação grava a lista inteira de uma vez (ver
+ * `reorderMenuSections`), então quem chama precisa da posição de origem e de
+ * destino, e não de um id com direção.
+ */
+function MoveArrowButton({
+  onClick,
+  title,
+  glyph,
+}: {
+  onClick: () => void;
+  title: string;
+  glyph: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      className="min-h-9 min-w-9 rounded-logo border border-borda-forte text-sm transition-colors hover:border-marca-600 hover:text-marca-800"
+    >
+      <span aria-hidden="true">{glyph}</span>
+    </button>
   );
 }
 
@@ -292,6 +321,7 @@ export function MenuEditor({
    */
   const [groupOrder, setGroupOrder] = useState<number[] | null>(null);
   const [valueOrder, setValueOrder] = useState<Record<number, number[]>>({});
+  const [sectionOrder, setSectionOrder] = useState<number[] | null>(null);
   const [sectionState, sectionAction, sectionPending] =
     useActionState(createMenuSection, emptyMenuState);
   const [productState, productAction, productPending] = useActionState(
@@ -342,6 +372,19 @@ export function MenuEditor({
     commitOrder("form-reorder-grupos", next.map((group) => group.id));
   }
 
+  function moveSectionTo(from: number, to: number) {
+    if (to < 0 || to >= sortedSections.length || from === to) return;
+    const next = arrayMove(sortedSections, from, to);
+    setSectionOrder(next.map((section) => section.id));
+    commitOrder("form-reorder-secoes", next.map((section) => section.id));
+  }
+
+  function onSectionsDragEnd(event: DragEndEvent) {
+    const from = sortedSections.findIndex((section) => section.id === event.active.id);
+    const to = sortedSections.findIndex((section) => section.id === event.over?.id);
+    moveSectionTo(from, to);
+  }
+
   function onGroupsDragEnd(event: DragEndEvent) {
     const from = sortedGroups.findIndex((group) => group.id === event.active.id);
     const to = sortedGroups.findIndex((group) => group.id === event.over?.id);
@@ -358,7 +401,8 @@ export function MenuEditor({
   /**
    * A ordem das setas ↑ ↓ é a ordem que o cliente vai ver: `sort_order` no
    * banco, desempate pelo nome para não ficar instável entre dois itens que
-   * nunca foram movidos. Um item já arrastado obedece `groupOrder`/`valueOrder`.
+   * nunca foram movidos. Um item já arrastado obedece
+   * `sectionOrder`/`groupOrder`/`valueOrder`.
    */
   const bySortOrder = <T extends { id: number; sort_order: number; name: string }>(
     list: T[],
@@ -368,6 +412,7 @@ export function MenuEditor({
     );
 
   const sortedGroups = reorder(bySortOrder(groups), groupOrder);
+  const sortedSections = reorder(bySortOrder(sections), sectionOrder);
 
   const valuesByGroup = new Map<number, MenuValue[]>();
   for (const value of values) {
@@ -406,11 +451,16 @@ export function MenuEditor({
   return (
     <div className="mt-10 space-y-12">
       {/*
-        Alvos das duas reordenações. Um form só, com o campo `optionGroupId`
+        Alvos das três reordenações. Um form só, com o campo `optionGroupId`
         preenchido no momento do envio: a action valida a propriedade de cada id
         pelo próprio grupo, então não há como o editor escrever valor de outra
         empresa.
       */}
+      <form id="form-reorder-secoes" action={reorderMenuSections} hidden>
+        <BackTo backTo={backTo} />
+        <input type="hidden" name="businessId" value={businessId} />
+        <input type="hidden" name="ids" defaultValue="" />
+      </form>
       <form id="form-reorder-grupos" action={reorderOptionGroups} hidden>
         <BackTo backTo={backTo} />
         <input type="hidden" name="businessId" value={businessId} />
@@ -432,6 +482,10 @@ export function MenuEditor({
               Os grupos que o cliente percorre: &quot;Pizzas&quot;, &quot;Bebidas&quot;,
               &quot;Sobremesas&quot;.
             </p>
+            <p className="mt-1 text-xs text-texto-tenue">
+              Arraste pela alça ou use as setas: é a ordem em que as seções
+              aparecem para o cliente.
+            </p>
           </div>
           <a
             href={previewHref}
@@ -443,100 +497,105 @@ export function MenuEditor({
           </a>
         </div>
 
-        {sections.length === 0 ? (
+        {sortedSections.length === 0 ? (
           <p className="mt-5 rounded-card border border-dashed border-borda-forte bg-white p-8 text-center text-sm text-texto-suave">
             Nenhuma seção ainda. Crie &quot;Entradas&quot; ou &quot;Bebidas&quot; para
             começar.
           </p>
         ) : (
-          <ul className="mt-5 space-y-3">
-            {sections.map((section, position) => {
-              const items = products
-                .filter((product) => product.menu_category_id === section.id)
-                .sort((a, b) => a.sort_order - b.sort_order);
-              const open = openSection === section.id;
+          <DndContext
+            id="secoes-do-cardapio"
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={onSectionsDragEnd}
+          >
+            <SortableContext
+              items={sortedSections.map((section) => section.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <ul className="mt-5 space-y-3">
+                {sortedSections.map((section, position) => {
+                  const items = products
+                    .filter((product) => product.menu_category_id === section.id)
+                    .sort((a, b) => a.sort_order - b.sort_order);
+                  const open = openSection === section.id;
 
-              return (
-                <li
-                  key={section.id}
-                  className="overflow-hidden rounded-card border border-borda bg-white"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-borda bg-superficie px-5 py-3">
-                    <button
-                      type="button"
-                      onClick={() => setOpenSection(open ? null : section.id)}
-                      aria-expanded={open}
-                      className="flex min-h-9 items-center gap-2 text-left text-sm font-black text-marca-800"
-                    >
-                      <span aria-hidden="true">{open ? "▾" : "▸"}</span>
-                      {section.name}
-                      <span className="font-normal text-texto-tenue">
-                        ({items.length})
-                      </span>
-                      {!section.is_active ? (
-                        <span className="rounded-pill bg-aviso/15 px-2 py-0.5 text-xs font-bold text-aviso-700">
-                          oculta
-                        </span>
-                      ) : null}
-                    </button>
+                  return (
+                    <SortableItem key={section.id} id={section.id}>
+                      <div className="overflow-hidden rounded-card border border-borda bg-white">
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-borda bg-superficie py-3 pl-7 pr-5">
+                          <button
+                            type="button"
+                            onClick={() => setOpenSection(open ? null : section.id)}
+                            aria-expanded={open}
+                            className="flex min-h-9 items-center gap-2 text-left text-sm font-black text-marca-800"
+                          >
+                            <span aria-hidden="true">{open ? "▾" : "▸"}</span>
+                            {section.name}
+                            <span className="font-normal text-texto-tenue">
+                              ({items.length})
+                            </span>
+                            {!section.is_active ? (
+                              <span className="rounded-pill bg-aviso/15 px-2 py-0.5 text-xs font-bold text-aviso-700">
+                                oculta
+                              </span>
+                            ) : null}
+                          </button>
 
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <ToggleButton
-                        action={toggleMenuSection}
-                        id={section.id}
-                        businessId={businessId}
-                        value={!section.is_active}
-                        active={!section.is_active}
-                        title={
-                          section.is_active
-                            ? "Ocultar seção da vitrine"
-                            : "Exibir seção na vitrine"
-                        }
-                        activeClass="border-aviso-700 bg-aviso/10 text-aviso-700"
-                      >
-                        {section.is_active ? "Visível" : "Oculta"}
-                      </ToggleButton>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <ToggleButton
+                              action={toggleMenuSection}
+                              id={section.id}
+                              businessId={businessId}
+                              value={!section.is_active}
+                              active={!section.is_active}
+                              title={
+                                section.is_active
+                                  ? "Ocultar seção da vitrine"
+                                  : "Exibir seção na vitrine"
+                              }
+                              activeClass="border-aviso-700 bg-aviso/10 text-aviso-700"
+                            >
+                              {section.is_active ? "Visível" : "Oculta"}
+                            </ToggleButton>
 
-                      {position > 0 ? (
-                        <ArrowButton
-                          action={moveMenuSection}
-                          id={section.id}
-                          businessId={businessId}
-                          direction="up"
-                          title={`Subir ${section.name}`}
-                          glyph="↑"
-                        />
-                      ) : null}
-                      {position < sections.length - 1 ? (
-                        <ArrowButton
-                          action={moveMenuSection}
-                          id={section.id}
-                          businessId={businessId}
-                          direction="down"
-                          title={`Descer ${section.name}`}
-                          glyph="↓"
-                        />
-                      ) : null}
-                    </div>
-                  </div>
+                            {position > 0 ? (
+                              <MoveArrowButton
+                                onClick={() => moveSectionTo(position, position - 1)}
+                                title={`Subir ${section.name}`}
+                                glyph="↑"
+                              />
+                            ) : null}
+                            {position < sortedSections.length - 1 ? (
+                              <MoveArrowButton
+                                onClick={() => moveSectionTo(position, position + 1)}
+                                title={`Descer ${section.name}`}
+                                glyph="↓"
+                              />
+                            ) : null}
+                          </div>
+                        </div>
 
-                  {open ? (
-                    <SectionBody
-                      businessId={businessId}
-                      backTo={backTo}
-                      section={section}
-                      items={items}
-                      groups={sortedGroups}
-                      linksByProduct={linksByProduct}
-                      productState={productState}
-                      productAction={productAction}
-                      productPending={productPending}
-                    />
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
+                        {open ? (
+                          <SectionBody
+                            businessId={businessId}
+                            backTo={backTo}
+                            section={section}
+                            items={items}
+                            groups={sortedGroups}
+                            linksByProduct={linksByProduct}
+                            productState={productState}
+                            productAction={productAction}
+                            productPending={productPending}
+                          />
+                        ) : null}
+                      </div>
+                    </SortableItem>
+                  );
+                })}
+              </ul>
+            </SortableContext>
+          </DndContext>
         )}
 
         {loose.length > 0 ? (
@@ -1335,26 +1394,18 @@ function OptionGroupCard({
 
         <div className="flex flex-wrap items-center gap-1.5">
           {!isFirst ? (
-            <button
-              type="button"
+            <MoveArrowButton
               onClick={() => onMove(-1)}
               title={`Subir ${group.name}`}
-              aria-label={`Subir ${group.name}`}
-              className="min-h-9 min-w-9 rounded-logo border border-borda-forte text-sm transition-colors hover:border-marca-600 hover:text-marca-800"
-            >
-              <span aria-hidden="true">↑</span>
-            </button>
+              glyph="↑"
+            />
           ) : null}
           {!isLast ? (
-            <button
-              type="button"
+            <MoveArrowButton
               onClick={() => onMove(1)}
               title={`Descer ${group.name}`}
-              aria-label={`Descer ${group.name}`}
-              className="min-h-9 min-w-9 rounded-logo border border-borda-forte text-sm transition-colors hover:border-marca-600 hover:text-marca-800"
-            >
-              <span aria-hidden="true">↓</span>
-            </button>
+              glyph="↓"
+            />
           ) : null}
         </div>
       </div>

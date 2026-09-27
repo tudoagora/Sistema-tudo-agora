@@ -4,8 +4,13 @@
 --             WooCommerce (produto) + PMPro (níveis) + taxonomias
 -- ============================================================
 
-create extension if not exists pg_trgm;
-create extension if not exists unaccent;
+-- `with schema public` e explicito de proposito: 20260101000002_search.sql
+-- chama public.unaccent() e usa similarity() dentro de funcoes com
+-- search_path = public. Sem fixar o schema, o Postgres escolheria o primeiro
+-- schema do search_path do executor -- no Supabase hospedado as extensoes
+-- pre-existentes vivem em `extensions`, e o resultado dependeria de quem rodou.
+create extension if not exists pg_trgm with schema public;
+create extension if not exists unaccent with schema public;
 
 -- ---------- ENUMS ----------
 

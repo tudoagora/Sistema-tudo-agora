@@ -215,33 +215,24 @@ export async function toggleMenuSection(formData: FormData) {
   revalidateMenu(businessId);
 }
 
-export async function moveMenuSection(formData: FormData) {
-  const id = int(formData, "id");
+/**
+ * Reordena as seções do cardápio — a ordem em que o cliente percorre o cardápio.
+ *
+ * Substitui `moveMenuSection`, que trocava dois `sort_order` vizinhos e não se
+ * mexia quando eles eram iguais.
+ */
+export async function reorderMenuSections(formData: FormData) {
   const businessId = int(formData, "businessId");
-  const direction = text(formData, "direction");
   const supabase = await clientFor(businessId);
   if (!supabase) return fail(formData, NO_PERMISSION);
 
-  const { data } = await supabase
-    .from("menu_categories")
-    .select("id, sort_order")
-    .eq("business_id", businessId)
-    .order("sort_order");
-  const rows = data ?? [];
-
-  const index = rows.findIndex((row) => row.id === id);
-  const target = direction === "up" ? index - 1 : index + 1;
-  if (index < 0 || target < 0 || target >= rows.length) return;
-
-  await supabase
-    .from("menu_categories")
-    .update({ sort_order: rows[target].sort_order })
-    .eq("id", rows[index].id);
-  await supabase
-    .from("menu_categories")
-    .update({ sort_order: rows[index].sort_order })
-    .eq("id", rows[target].id);
-
+  await applyOrder(
+    supabase,
+    { table: "menu_categories" },
+    businessId,
+    orderFromForm(formData),
+    formData,
+  );
   revalidateMenu(businessId);
 }
 
@@ -643,6 +634,73 @@ export async function deleteOptionValue(formData: FormData) {
 }
 
 /**
+ * As três listas reordenáveis do editor (seções, grupos de opção e valores de
+ * um grupo) e a coluna que diz de quem é cada linha.
+ *
+ * A coluna é derivada da tabela, não passada junto: `option_values` não tem
+ * `business_id`, e a empresa vem do grupo — a action confere a cadeia antes de
+ * chegar em `applyOrder`.
+ */
+type OrderScope = { table: "menu_categories" | "option_groups" | "option_values" };
+
+type MenuClient = Awaited<ReturnType<typeof createClient>>;
+
+/** Ids que a empresa (ou o grupo) pode reordenar. */
+async function orderableIds(
+  supabase: MenuClient,
+  scope: OrderScope,
+  value: number,
+): Promise<{ id: number }[] | null> {
+  if (scope.table === "option_values") {
+    const { data } = await supabase
+      .from("option_values")
+      .select("id")
+      .eq("option_group_id", value);
+    return data;
+  }
+  if (scope.table === "menu_categories") {
+    const { data } = await supabase
+      .from("menu_categories")
+      .select("id")
+      .eq("business_id", value);
+    return data;
+  }
+  const { data } = await supabase
+    .from("option_groups")
+    .select("id")
+    .eq("business_id", value);
+  return data;
+}
+
+async function setSortOrder(
+  supabase: MenuClient,
+  scope: OrderScope,
+  value: number,
+  id: number,
+  sortOrder: number,
+): Promise<{ error: { code?: string; message: string } | null }> {
+  if (scope.table === "option_values") {
+    return supabase
+      .from("option_values")
+      .update({ sort_order: sortOrder })
+      .eq("option_group_id", value)
+      .eq("id", id);
+  }
+  if (scope.table === "menu_categories") {
+    return supabase
+      .from("menu_categories")
+      .update({ sort_order: sortOrder })
+      .eq("business_id", value)
+      .eq("id", id);
+  }
+  return supabase
+    .from("option_groups")
+    .update({ sort_order: sortOrder })
+    .eq("business_id", value)
+    .eq("id", id);
+}
+
+/**
  * Grava a ordem vinda do editor, um `sort_order` por posição (1..N).
  *
  * Substitui a troca entre dois vizinhos porque essa troca depende de os dois
@@ -655,30 +713,15 @@ export async function deleteOptionValue(formData: FormData) {
  * empresa" — nunca "o cliente pediu exatamente este par".
  */
 async function applyOrder(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  scope: { businessId: number } | { optionGroupId: number },
+  supabase: MenuClient,
+  scope: OrderScope,
+  owner: number,
   ids: number[],
   formData: FormData,
 ): Promise<void> {
   if (ids.length === 0) return;
 
-  // `option_values` não tem `business_id`: a empresa vem do grupo, e é por
-  // isso que os dois ramos não podem compartilhar o mesmo `.from()`.
-  const owned =
-    "businessId" in scope
-      ? (
-          await supabase
-            .from("option_groups")
-            .select("id")
-            .eq("business_id", scope.businessId)
-        ).data
-      : (
-          await supabase
-            .from("option_values")
-            .select("id")
-            .eq("option_group_id", scope.optionGroupId)
-        ).data;
-
+  const owned = await orderableIds(supabase, scope, owner);
   const permitted = new Set((owned ?? []).map((row) => row.id));
   if (ids.length !== permitted.size || ids.some((id) => !permitted.has(id))) {
     fail(formData, NO_PERMISSION);
@@ -689,13 +732,8 @@ async function applyOrder(
   // requisição só, mas o tipo de inserção exige `name` e a coluna de dono, e
   // mandar dado que não mudou seria confiar no adiamento do NOT NULL do
   // Postgres — não vale a aposta por uma lista de meia dúzia.
-  const writes = ids.map((id, index) => ({ id, sort_order: index + 1 }));
   const results = await Promise.all(
-    writes.map(({ id, sort_order }) =>
-      "businessId" in scope
-        ? supabase.from("option_groups").update({ sort_order }).eq("id", id)
-        : supabase.from("option_values").update({ sort_order }).eq("id", id),
-    ),
+    ids.map((id, index) => setSortOrder(supabase, scope, owner, id, index + 1)),
   );
   const failed = results.find((result) => result.error);
   if (failed?.error) fail(formData, friendly(failed.error));
@@ -719,8 +757,7 @@ export async function reorderOptionGroups(formData: FormData) {
   if (!supabase) return fail(formData, NO_PERMISSION);
 
   const ids = orderFromForm(formData);
-  if (ids.length === 0) return;
-  await applyOrder(supabase, { businessId }, ids, formData);
+  await applyOrder(supabase, { table: "option_groups" }, businessId, ids, formData);
   revalidateMenu(businessId);
 }
 
@@ -744,9 +781,13 @@ export async function reorderOptionValues(formData: FormData) {
     .maybeSingle();
   if (group?.business_id !== businessId) return fail(formData, NO_PERMISSION);
 
-  const ids = orderFromForm(formData);
-  if (ids.length === 0) return;
-  await applyOrder(supabase, { optionGroupId }, ids, formData);
+  await applyOrder(
+    supabase,
+    { table: "option_values" },
+    optionGroupId,
+    orderFromForm(formData),
+    formData,
+  );
   revalidateMenu(businessId);
 }
 
@@ -761,12 +802,6 @@ export async function deleteOptionGroup(formData: FormData) {
 
   revalidateMenu(businessId);
 }
-
-/**
- * Reordena os grupos de opção — é a ordem em que o cliente responde "Tamanho,
- * Borda, Molho, Extras" no pedido. Substitui `moveOptionGroup`, que trocava dois
- * `sort_order` vizinhos e não se mexia quando eles eram iguais.
- */
 
 export async function linkProductToOptionGroup(formData: FormData) {
   const businessId = int(formData, "businessId");
