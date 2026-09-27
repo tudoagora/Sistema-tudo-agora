@@ -1,25 +1,44 @@
 const DEFAULT_SITE_URL = "https://tudoagora.app.br";
 
-/**
- * Resolve a URL pública do site tolerando variável ausente, vazia ou
- * malformada. `??` não basta: no Vercel uma env declarada sem valor chega como
- * `""`, que é um erro de sintaxe para `new URL()` e derrubava o build inteiro
- * na avaliação de `src/app/layout.tsx`.
- */
-function resolveSiteUrl(value: string | undefined | null): string {
-  // Prioriza o domínio Vercel FREE durante o build (usa automaticamente
-  // https://<project-name>.vercel.app durante desenvolvimento/preview)
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL.replace(/\/$/, "")}`;
-  }
-  
+/** Aceita só URL absoluta válida; `null` para vazio, malformado ou relativo. */
+function normalizeUrl(value: string | undefined | null): string | null {
   const candidate = (value ?? "").trim();
-  if (!candidate) return DEFAULT_SITE_URL;
+  if (!candidate) return null;
   try {
     return new URL(candidate).href.replace(/\/$/, "");
   } catch {
-    return DEFAULT_SITE_URL;
+    return null;
   }
+}
+
+/**
+ * URL pública do site, usada em `metadataBase`, OpenGraph e redirecionamentos.
+ *
+ * Fase de teste (hoje): manda o endereço do próprio deploy, porque o domínio
+ * oficial ainda responde pelo WordPress antigo — apontar metadata e OpenGraph
+ * para lá levaria o visitante ao site errado. O Vercel injeta `VERCEL_URL`
+ * sozinho em todo build, então não há nada a cadastrar.
+ *
+ * Na migração, cadastre no Vercel
+ * `NEXT_PUBLIC_SITE_URL=https://tudoagora.app.br` junto de
+ * `NEXT_PUBLIC_FORCE_SITE_URL=true`; o domínio oficial assume sem alterar uma
+ * linha de código.
+ *
+ * `??` não bastava: env declarada sem valor chega como `""`, que é erro de
+ * sintaxe para `new URL()` e derrubava o build inteiro em `src/app/layout.tsx`.
+ */
+function resolveSiteUrl(value: string | undefined): string {
+  const explicit = normalizeUrl(value);
+
+  // Domínio oficial só entra quando pedido de propósito (dia da virada).
+  if (explicit && process.env.NEXT_PUBLIC_FORCE_SITE_URL === "true") return explicit;
+
+  const deployment = normalizeUrl(
+    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null,
+  );
+  if (deployment) return deployment;
+
+  return explicit ?? DEFAULT_SITE_URL;
 }
 
 export const siteConfig = {
