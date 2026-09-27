@@ -1,0 +1,1533 @@
+"use client";
+
+import {
+  useActionState,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import Link from "next/link";
+
+import { placeOrder, type OrderState } from "@/app/cardapio/[slug]/actions";
+import {
+  formatBRL,
+  formatPhone,
+  isOpenNow,
+  whatsappLink,
+  type OpeningHours,
+} from "@/lib/format";
+import { availablePayments } from "@/lib/order";
+import {
+  eligibleHalves,
+  halvesLabel,
+  halvesRequirement,
+  lineUnitPriceCents,
+  type HalfItemLike,
+} from "@/lib/halves";
+import { cn } from "@/lib/utils";
+
+type OptionValue = {
+  id: number;
+  name: string;
+  price_delta_cents: number;
+  /** Metades que este valor exige. `0` = pizza inteira, sem seletor. */
+  halves_count: number;
+};
+type OptionGroup = {
+  id: number;
+  name: string;
+  min_select: number;
+  max_select: number;
+  is_required: boolean;
+  values: OptionValue[];
+};
+export type StoreItem = {
+  id: number;
+  name: string;
+  description: string | null;
+  price_cents: number;
+  compare_at_cents: number;
+  image_url: string | null;
+  is_featured: boolean;
+  /** `null` = item sem seção; o servidor agrupa num "Outros". */
+  menu_category_id: number | null;
+  option_groups: OptionGroup[];
+};
+export type StoreSection = {
+  id: number;
+  name: string;
+  description: string | null;
+  image_url: string | null;
+  items: StoreItem[];
+};
+export type StoreBusiness = {
+  id: number;
+  slug: string;
+  name: string;
+  description: string | null;
+  logo_url: string | null;
+  cover_url: string | null;
+  whatsapp: string | null;
+  phone: string | null;
+  address: string | null;
+  neighborhood: string | null;
+  opening_hours: OpeningHours | null;
+  fulfillment: string[] | null;
+  payment_methods: string[] | null;
+  delivery_fee_cents: number;
+  min_order_cents: number;
+};
+
+type Line = {
+  /**
+   * Identidade da linha: produto + escolha de opções.
+   *
+   * Duas pizzas do mesmo sabor com tamanhos/bordas diferentes são duas
+   * linhas, não uma linha de quantidade 2. Sem isso o cliente pedia
+   * "média com catupiry" e "grande sem borda" e o carrinho virava um item
+   * único com os dois tamanhos e as duas bordas marcados — impossível de
+   * produzir na cozinha.
+   */
+  key: string;
+  item: StoreItem;
+  quantity: number;
+  /** groupId -> valueIds escolhidos */
+  selection: Record<number, number[]>;
+  /** Product ids das metades, na ordem escolhida. Vazio para pizza inteira. */
+  halves: number[];
+  notes: string;
+};
+
+/** Todo o cardápio indexado, para resolver ids de metade em O(1). */
+type PorId = ReadonlyMap<number, HalfItemLike>;
+
+/**
+ * Assinatura estável do conjunto de opções — a identidade da linha.
+ *
+ * A ordem dentro do grupo não conta: escolher "média" e depois "grande" dá a
+ * mesma chave que escolher "grande" e depois "média", então o passo de
+ * quantidade continua somando na linha certa em vez de criar duplicata.
+ *
+ * As metades entram ordenadas do mesmo jeito pelo mesmo motivo — o que
+ * diferencia duas linhas é o conjunto de sabores, não a ordem em que o cliente
+ * os tocou.
+ */
+function lineKey(
+  itemId: number,
+  selection: Record<number, number[]>,
+  halves: readonly number[] = [],
+) {
+  const grupos = Object.keys(selection)
+    .map(Number)
+    .sort((a, b) => a - b)
+    .map(
+      (groupId) =>
+        `${groupId}=${[...(selection[groupId] ?? [])]
+          .sort((a, b) => a - b)
+          .join(".")}`,
+    )
+    .join("|");
+  const sabores = [...halves].sort((a, b) => a - b).join(".");
+  return `p${itemId}#${grupos}#${sabores}`;
+}
+
+const initialState: OrderState = { code: null, error: null, fieldErrors: {} };
+
+/** Aviso efêmero que confirma a entrada do item no carrinho. */
+type AddedNotice = {
+  /** Sequência: faz a animação reiniciar a cada adição. */
+  seq: number;
+  name: string;
+  detail: string;
+  total: number;
+};
+
+
+function deltaLabel(cents: number): string {
+  if (!cents) return "";
+  return `${cents > 0 ? "+" : "−"}${formatBRL(Math.abs(cents))}`;
+}
+
+/** Preço já com as opções e as metades — mesma conta que a action refaz. */
+function unitPrice(line: Line, porId: PorId): number {
+  return lineUnitPriceCents(line.item, line.selection, line.halves, porId);
+}
+
+function missingChoices(
+  item: StoreItem,
+  selection: Record<number, number[]>,
+  halves: readonly number[],
+) {
+  const missing: string[] = [];
+  for (const group of item.option_groups) {
+    // `is_required` com `min_select = 0` é um grupo que precisa de ao menos
+    // uma escolha — o rótulo "obrigatório" já avisa isso na tela.
+    const minimo = Math.max(group.min_select, group.is_required ? 1 : 0);
+    if ((selection[group.id] ?? []).length < minimo) missing.push(group.name);
+  }
+  // "2 Sabores" escolhido sem as duas metades é a lacuna que faria o cliente
+  // pagar por uma pizza inteira e a cozinha receber uma só. Entra na lista de
+  // faltantes com o nome do próprio grupo, que é o texto que o cliente lê.
+  if (halves.length < halvesRequirement(item, selection)) {
+    const grupo = item.option_groups.find((g) =>
+      g.values.some((v) => v.halves_count > 0),
+    );
+    missing.push(grupo?.name ?? "os sabores");
+  }
+  return missing;
+}
+
+/** Preço de uma escolha ainda no rascunho, para mostrar antes de adicionar. */
+function draftPrice(
+  item: StoreItem,
+  selection: Record<number, number[]>,
+  halves: readonly number[],
+  porId: PorId,
+): number {
+  return lineUnitPriceCents(item, selection, halves, porId);
+}
+
+function chosenNames(
+  item: StoreItem,
+  selection: Record<number, number[]>,
+  halves: readonly number[],
+  porId: PorId,
+) {
+  const nomes = item.option_groups.flatMap((group) =>
+    (selection[group.id] ?? [])
+      .map((id) => group.values.find((value) => value.id === id)?.name)
+      .filter((name): name is string => Boolean(name)),
+  );
+  const meioAMeio = halvesLabel(halves, porId);
+  if (meioAMeio) nomes.push(meioAMeio);
+  return nomes;
+}
+
+/**
+ * Rótulo acessível de uma linha do carrinho.
+ *
+ * Duas linhas podem ser o mesmo sabor com opções diferentes, então "Diminuir
+ * Pizza" duas vezes na tela é ambíguo para leitor de tela. Incluir as opções
+ * deixa cada botão identificável.
+ */
+function rotularLinha(name: string, options: string[]) {
+  return options.length > 0 ? `${name} (${options.join(", ")})` : name;
+}
+
+export function Storefront({
+  business,
+  sections,
+  citySlug,
+  timezone,
+}: {
+  business: StoreBusiness;
+  sections: StoreSection[];
+  citySlug: string;
+  timezone: string;
+}) {
+  const visible = useMemo(
+    () => sections.filter((section) => section.items.length > 0),
+    [sections],
+  );
+
+  /**
+   * O cardápio inteiro indexado. Meio a meio precisa consultar produtos que
+   * podem estar em outra linha da grade — o cliente monta "meio a meio
+   * Margherita + Quatro Queijos" na Margherita, e o Quatro Queijos está 4
+   * posições abaixo. Filtrar `section.items` só na hora do render refaria esse
+   * filtro a cada item e a cada re-render.
+   */
+  const porId = useMemo<PorId>(() => {
+    const mapa = new Map<number, StoreItem>();
+    for (const section of sections) {
+      for (const item of section.items) mapa.set(item.id, item);
+    }
+    return mapa;
+  }, [sections]);
+
+  const [lines, setLines] = useState<Line[]>([]);
+  /** Escolhas em andamento antes de o item entrar no carrinho. */
+  const [drafts, setDrafts] = useState<Record<number, Record<number, number[]>>>(
+    {},
+  );
+  /**
+   * Metades em andamento, por item: `itemId -> [saborId, saborId]`.
+   *
+   * Vive separado de `drafts` porque a chave de identificação de uma escolha de
+   * opção é o valueId, e o de uma metade é o productId — misturar os dois no
+   * mesmo objeto produziria `Record<number, number[]>` onde o número às vezes
+   * é um e às vezes é outro, e o bug apareceria só com grupo de sabor
+   * configurado.
+   */
+  const [halfDrafts, setHalfDrafts] = useState<Record<number, number[]>>({});
+  /**
+   * Seção destacada no menu de navegação. Não esconde nada: todas as seções
+   * ficam na página, o botão só rola até ela. Abas de verdade escondiam 16 dos
+   * 19 itens de quem abre a pagina sem JavaScript, e nao davam URL para uma
+   * categoria especifica.
+   */
+  const [activeId, setActiveId] = useState<number | null>(visible[0]?.id ?? null);
+  const [customizing, setCustomizing] = useState<number | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+  const [added, setAdded] = useState<AddedNotice | null>(null);
+  /** Só para reiniciar a animação a cada adição. */
+  const addedSeq = useRef(0);
+
+  // O aviso some sozinho: ele confirma, não é um estado que o cliente precise
+  // managear. `added` na dependência reinicia o relógio se ele adicionar outro
+  // item antes do tempo do primeiro.
+  useEffect(() => {
+    if (!added) return;
+    const timer = setTimeout(() => setAdded(null), 3800);
+    return () => clearTimeout(timer);
+  }, [added]);
+
+  // Destaca no menu a secao que esta no topo da tela enquanto o cliente rola.
+  useEffect(() => {
+    const alvos = visible
+      .map((section) => document.getElementById(`secao-${section.id}`))
+      .filter((el): el is HTMLElement => el !== null);
+    if (alvos.length === 0) return;
+    const visivel = new Map<number, number>();
+    const observer = new IntersectionObserver(
+      (entradas) => {
+        for (const entrada of entradas) {
+          visivel.set(Number(entrada.target.id.replace("secao-", "")), entrada.intersectionRatio);
+        }
+        const melhor = [...visivel.entries()].sort((a, b) => b[1] - a[1])[0];
+        if (melhor && melhor[1] > 0) setActiveId(melhor[0]);
+      },
+      { rootMargin: "-140px 0px -55% 0px", threshold: [0, 0.25, 0.5, 1] },
+    );
+    for (const alvo of alvos) observer.observe(alvo);
+    return () => observer.disconnect();
+  }, [visible]);
+
+  const [fulfillment, setFulfillment] = useState(
+    () => business.fulfillment?.[0] ?? "",
+  );
+  const payments = useMemo(
+    () => availablePayments(business.payment_methods),
+    [business.payment_methods],
+  );
+  const [payment, setPayment] = useState<string>(() => payments[0]?.enum ?? "");
+
+  const [state, formAction, pending] = useActionState(placeOrder, initialState);
+
+  const totalCount = lines.reduce((sum, line) => sum + line.quantity, 0);
+  const subtotal = lines.reduce(
+    (sum, line) => sum + unitPrice(line, porId) * line.quantity,
+    0,
+  );
+  const deliveryFee =
+    fulfillment === "delivery" ? business.delivery_fee_cents : 0;
+  const total = subtotal + deliveryFee;
+  const belowMinimum =
+    business.min_order_cents > 0 && subtotal < business.min_order_cents;
+
+  // Esvazia o carrinho no mesmo render em que o código do pedido aparece.
+  // Ajustar estado durante o render é o padrão da React para "mudei de props,
+  // ajuste o estado" — um effect aqui dispararia um segundo render em cascata.
+  const [placedCode, setPlacedCode] = useState(state.code);
+  if (state.code && state.code !== placedCode) {
+    setPlacedCode(state.code);
+    setLines([]);
+    setDrafts({});
+    setHalfDrafts({});
+    setCustomizing(null);
+    setReviewing(false);
+  }
+
+  function toggleDraft(item: StoreItem, group: OptionGroup, valueId: number) {
+    setDrafts((current) => {
+      const forItem = current[item.id] ?? {};
+      const ids = forItem[group.id] ?? [];
+      const next = ids.includes(valueId)
+        ? ids.filter((id) => id !== valueId)
+        : ids.length < group.max_select
+          ? [...ids, valueId]
+          : [valueId];
+      return { ...current, [item.id]: { ...forItem, [group.id]: next } };
+    });
+  }
+
+  /**
+   * Metades do rascunho, aparadas ao que a escolha atual exige.
+   *
+   * Derivar em vez de sincronizar: `halfDrafts` guarda o que o cliente tocou,
+   * e quem decide o que vale é a seleção do grupo de sabor no mesmo render.
+   * Limpar o estado no clique daria a leitura errada — o updater do `setDrafts`
+   * ainda enxerga a seleção anterior — e o sintoma apareceria só ao trocar
+   * "2 Sabores" por "1 Sabor", que é o caminho que o próprio texto do grupo
+   * convida a percorrer.
+   */
+  function metadesDoRascunho(
+    item: StoreItem,
+    selection: Record<number, number[]>,
+  ): number[] {
+    const exigido = halvesRequirement(item, selection);
+    if (exigido === 0) return [];
+    // `0` é o marcador de posição vazia que `setHalf` usa enquanto o cliente
+    // não escolheu aquele lado.
+    return (halfDrafts[item.id] ?? []).filter((id) => id !== 0).slice(0, exigido);
+  }
+
+  /** Marca a metade `posicao` do item, trocando o sabor anterior se houver. */
+  function setHalf(item: StoreItem, posicao: number, productId: number) {
+    setHalfDrafts((current) => {
+      const atuais = current[item.id] ?? [];
+      const proximas = [...atuais];
+      while (proximas.length <= posicao) proximas.push(0);
+      proximas[posicao] = proximas[posicao] === productId ? 0 : productId;
+      // Sem ids nulos sobrando: a ordem importa para a cozinha, mas buracos
+      // não são uma ordem que o cliente possa ter pedido.
+      while (proximas.length > 0 && proximas[proximas.length - 1] === 0) {
+        proximas.pop();
+      }
+      return { ...current, [item.id]: proximas };
+    });
+  }
+
+  function add(item: StoreItem) {
+    const selection = drafts[item.id] ?? {};
+    const halves = metadesDoRascunho(item, selection);
+
+    // Rede de segurança: item com variação só entra no carrinho depois de
+    // escolhida. A UI já esconde o botão, mas `add` é o único portão — se
+    // algum caminho novo a chamar, o item não sai incompleto daqui.
+    if (missingChoices(item, selection, halves).length > 0) {
+      setCustomizing(item.id);
+      return;
+    }
+
+    const key = lineKey(item.id, selection, halves);
+    const igual = lines.find((line) => line.key === key);
+    const quantidade = igual ? Math.min(99, igual.quantity + 1) : 1;
+
+    setLines((current) => {
+      const found = current.find((line) => line.key === key);
+      // Mesma configuração: soma na linha existente. Configuração diferente
+      // vira linha nova, e é isso que permite pedir o mesmo sabor duas vezes
+      // com tamanhos e bordas distintos.
+      return found
+        ? current.map((line) =>
+            line.key === key
+              ? { ...line, quantity: Math.min(99, line.quantity + 1) }
+              : line,
+          )
+        : [...current, { key, item, quantity: 1, selection, halves, notes: "" }];
+    });
+
+    // Zera o rascunho e fecha o painel: o item vai para a barra de carrinho
+    // com as opções já registradas, e a próxima vez que o cliente tocar em
+    // "Personalizar" ele monta uma configuração nova do zero.
+    setDrafts((current) => {
+      const proximo = { ...current };
+      delete proximo[item.id];
+      return proximo;
+    });
+    setHalfDrafts((current) => {
+      const proximo = { ...current };
+      delete proximo[item.id];
+      return proximo;
+    });
+    setCustomizing(null);
+    setAdded({
+      seq: addedSeq.current++,
+      name: item.name,
+      detail: chosenNames(item, selection, halves, porId).join(" · "),
+      total: draftPrice(item, selection, halves, porId) * quantidade,
+    });
+  }
+
+  function changeQuantity(key: string, delta: number) {
+    setLines((current) =>
+      current
+        .map((line) =>
+          line.key === key
+            ? {
+                ...line,
+                quantity: Math.max(0, Math.min(99, line.quantity + delta)),
+              }
+            : line,
+        )
+        .filter((line) => line.quantity > 0),
+    );
+  }
+
+  function setNotes(index: number, notes: string) {
+    setLines((current) =>
+      current.map((line, i) => (i === index ? { ...line, notes } : line)),
+    );
+  }
+
+  /* ------------------------------- confirmação ------------------------------ */
+
+  if (state.code) {
+    const message = `Olá! Acabei de fazer o pedido ${state.code} no cardápio de ${business.name}.`;
+    const zap = whatsappLink(business.whatsapp, message);
+
+    return (
+      <section className="mx-auto max-w-lg px-4 py-16 text-center">
+        <p className="text-sm font-bold text-sucesso-700">Pedido enviado</p>
+        <h2 className="mt-2 text-2xl font-black text-marca-800">
+          {business.name} recebeu seu pedido
+        </h2>
+        <p className="mt-3 text-sm text-texto-suave">
+          Guarde o código — é por ele que a empresa acompanha o andamento.
+        </p>
+        <p className="mx-auto mt-4 inline-block rounded-card bg-marca-gradient px-6 py-3 text-xl font-black tracking-widest text-white">
+          {state.code}
+        </p>
+        <div className="mt-8 flex flex-col gap-2 sm:flex-row sm:justify-center">
+          {zap ? (
+            <a
+              href={zap}
+              className="inline-flex min-h-11 items-center justify-center rounded-pill border border-borda-forte px-6 text-sm font-bold text-texto-suave hover:border-marca-600"
+            >
+              Avisar no WhatsApp
+            </a>
+          ) : null}
+          <Link
+            href={`/cidades/${citySlug}/empresa/${business.slug}`}
+            className="inline-flex min-h-11 items-center justify-center rounded-pill border border-borda-forte px-6 text-sm font-bold text-texto-suave hover:border-marca-600"
+          >
+            Voltar à empresa
+          </Link>
+        </div>
+      </section>
+    );
+  }
+
+  /* --------------------------------- revisão --------------------------------- */
+
+  if (reviewing) {
+    return (
+      <Review
+        business={business}
+        citySlug={citySlug}
+        lines={lines}
+        porId={porId}
+        onChangeQuantity={changeQuantity}
+        onNotes={setNotes}
+        subtotal={subtotal}
+        deliveryFee={deliveryFee}
+        total={total}
+        belowMinimum={belowMinimum}
+        fulfillment={fulfillment}
+        setFulfillment={setFulfillment}
+        payments={payments}
+        payment={payment}
+        setPayment={setPayment}
+        state={state}
+        pending={pending}
+        formAction={formAction}
+        onBack={() => setReviewing(false)}
+      />
+    );
+  }
+
+  /* --------------------------------- vitrine --------------------------------- */
+
+  const open = isOpenNow(business.opening_hours, timezone);
+
+  return (
+    <div className="pb-28 lg:pb-12">
+      <header className="border-b border-borda bg-superficie">
+        {business.cover_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={business.cover_url}
+            alt=""
+            className="h-36 w-full object-cover sm:h-56"
+          />
+        ) : null}
+        <div className="mx-auto w-full max-w-4xl px-4 py-6 lg:px-6">
+          <div className="flex items-start gap-4">
+            {business.logo_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={business.logo_url}
+                alt=""
+                className="h-16 w-16 shrink-0 rounded-logo border-2 border-white object-cover shadow-card sm:h-20 sm:w-20"
+              />
+            ) : null}
+            <div className="min-w-0 flex-1">
+              <h1 className="text-2xl font-black text-marca-800 sm:text-3xl">
+                {business.name}
+              </h1>
+              {business.neighborhood || business.address ? (
+                <p className="mt-1 text-sm text-texto-suave">
+                  {[business.neighborhood, business.address]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+              ) : null}
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                <span
+                  className={cn(
+                    "rounded-pill px-2.5 py-1 font-bold",
+                    open ? "bg-sucesso/10 text-sucesso-700" : "bg-erro/10 text-erro-700",
+                  )}
+                >
+                  {open ? "Aberto agora" : "Fechado agora"}
+                </span>
+                {business.phone ? (
+                  <span className="text-texto-tenue">
+                    {formatPhone(business.phone)}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          </div>
+          {business.description ? (
+            <p className="mt-4 max-w-2xl text-sm leading-relaxed text-texto-suave">
+              {business.description}
+            </p>
+          ) : null}
+        </div>
+      </header>
+
+      <nav
+        aria-label="Seções do cardápio"
+        // O `SiteHeader` é `sticky top-0` com h-16. Sem o `top-16` aqui, o
+        // menu de seções grudava em 0 por baixo do header e sumia da tela ao
+        // rolar — o cliente tinha que voltar ao topo para trocar de categoria.
+        className="sticky top-16 z-20 border-b border-borda bg-white/95 backdrop-blur"
+      >
+        <ul className="no-scrollbar mx-auto flex w-full max-w-4xl gap-1 overflow-x-auto px-4 lg:px-6">
+          {visible.map((section) => (
+            <li key={section.id}>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveId(section.id);
+                  document
+                    .getElementById(`secao-${section.id}`)
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+                aria-current={activeId === section.id ? "true" : undefined}
+                className={cn(
+                  "min-h-12 shrink-0 border-b-2 px-4 text-sm font-bold transition-colors",
+                  activeId === section.id
+                    ? "border-destaque-500 text-marca-800"
+                    : "border-transparent text-texto-suave hover:text-marca-800",
+                )}
+              >
+                {section.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </nav>
+
+      <div className="mx-auto w-full max-w-4xl px-4 py-6 lg:px-6">
+        {visible.length === 0 ? (
+          <p className="rounded-card border border-dashed border-borda-forte bg-white p-10 text-center text-sm text-texto-suave">
+            Esta empresa ainda não publicou itens no cardápio.
+          </p>
+        ) : (
+          <div className="space-y-10">
+            {visible.map((section) => (
+              <section
+                key={section.id}
+                id={`secao-${section.id}`}
+                aria-labelledby={`titulo-${section.id}`}
+                // 4rem do header fixo + ~3rem deste menu de seções: sem isso o
+                // título da seção fica escondido atrás das duas barras ao
+                // pular para uma categoria.
+                className="scroll-mt-28"
+              >
+                <div className="flex flex-wrap items-baseline justify-between gap-3">
+                  <h2
+                    id={`titulo-${section.id}`}
+                    className="text-lg font-black text-marca-800"
+                  >
+                    {section.name}
+                  </h2>
+                  <span className="text-xs text-texto-tenue">
+                    {section.items.length}{" "}
+                    {section.items.length === 1 ? "item" : "itens"}
+                  </span>
+                </div>
+                {section.description ? (
+                  <p className="mt-1 text-sm text-texto-suave">
+                    {section.description}
+                  </p>
+                ) : null}
+
+                <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {section.items.map((item) => {
+                    // O mesmo sabor pode estar em várias linhas do carrinho,
+                    // cada uma com uma configuração de opções diferente.
+                    const doItem = lines.filter(
+                      (line) => line.item.id === item.id,
+                    );
+                    const selection = drafts[item.id] ?? {};
+                    return (
+                      <ItemCard
+                        key={item.id}
+                        item={item}
+                        selection={selection}
+                        halves={metadesDoRascunho(item, selection)}
+                        halfOptions={eligibleHalves(item, section.items)}
+                        porId={porId}
+                        count={doItem.reduce((s, l) => s + l.quantity, 0)}
+                        variantKeys={doItem.map((line) => line.key)}
+                        expanded={customizing === item.id}
+                        onToggle={() =>
+                          setCustomizing(customizing === item.id ? null : item.id)
+                        }
+                        onSelect={(group, valueId) =>
+                          toggleDraft(item, group, valueId)
+                        }
+                        onHalf={(posicao, productId) =>
+                          setHalf(item, posicao, productId)
+                        }
+                        onAdd={() => add(item)}
+                        onQuantity={(key, delta) => changeQuantity(key, delta)}
+                      />
+                    );
+                  })}
+                </ul>
+              </section>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {totalCount > 0 ? (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-borda bg-white p-3 shadow-card">
+          <div className="mx-auto flex w-full max-w-4xl items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs text-texto-suave">
+                {totalCount} {totalCount === 1 ? "item" : "itens"}
+              </p>
+              <p className="text-lg font-black text-marca-800">
+                {formatBRL(subtotal)}
+              </p>
+            </div>
+            {/* A `key` troca a cada adição, o que reinicia a animação do pulso
+                e faz o olho ir do aviso para o botão de revisão. */}
+            <button
+              key={added?.seq ?? 0}
+              type="button"
+              onClick={() => setReviewing(true)}
+              className={cn(
+                "min-h-12 shrink-0 rounded-pill bg-marca-gradient px-7 text-sm font-bold text-white transition-opacity hover:opacity-90",
+                added && "animate-carrinho-pulso",
+              )}
+            >
+              Revisar pedido
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/*
+        Confirmação de que o item entrou no carrinho. Aparece acima da barra
+        para não cobrir o total, e some sozinho: quem precisa da verdade é o
+        cliente, não o estado da tela.
+      */}
+      {added ? (
+        <div
+          className="pointer-events-none fixed inset-x-0 bottom-24 z-40 px-4 lg:bottom-28"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="animate-aviso-entra pointer-events-auto mx-auto flex w-full max-w-4xl items-start gap-3 rounded-card border border-sucesso/30 bg-white p-3 shadow-media">
+            <span className="animate-check-pop grid h-9 w-9 shrink-0 place-items-center rounded-full bg-sucesso-700 text-base font-black text-white">
+              ✓
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-black text-texto-forte">
+                {added.name} no carrinho
+              </p>
+              {added.detail ? (
+                <p className="truncate text-xs text-texto-suave">
+                  {added.detail}
+                </p>
+              ) : null}
+            </div>
+            <p className="shrink-0 text-sm font-black text-marca-800">
+              {formatBRL(added.total)}
+            </p>
+            <button
+              type="button"
+              onClick={() => setAdded(null)}
+              aria-label="Fechar aviso"
+              className="-mr-1 shrink-0 rounded-pill px-2 py-1 text-lg leading-none text-texto-tenue hover:text-texto-forte"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+function ItemCard({
+  item,
+  selection,
+  halves,
+  halfOptions,
+  porId,
+  count,
+  variantKeys,
+  expanded,
+  onToggle,
+  onSelect,
+  onHalf,
+  onAdd,
+  onQuantity,
+}: {
+  item: StoreItem;
+  selection: Record<number, number[]>;
+  /** Metades já escolhidas neste rascunho, na ordem dos lados. */
+  halves: number[];
+  /** Quem pode ser metade deste item: mesma seção, exceto ele mesmo. */
+  halfOptions: StoreItem[];
+  /** Cardápio indexado, para o preço do rascunho resolver as metades. */
+  porId: PorId;
+  /** Quantas unidades deste produto estão no carrinho, somando as linhas. */
+  count: number;
+  /**
+   * Chaves das linhas deste produto. Mais de uma significa configurações
+   * diferentes (tamanho, borda) do mesmo sabor já no carrinho.
+   */
+  variantKeys: string[];
+  expanded: boolean;
+  onToggle: () => void;
+  onSelect: (group: OptionGroup, valueId: number) => void;
+  onHalf: (posicao: number, productId: number) => void;
+  onAdd: () => void;
+  onQuantity: (key: string, delta: number) => void;
+}) {
+  const onSale = item.compare_at_cents > item.price_cents;
+  const hasOptions = item.option_groups.length > 0;
+  const missing = missingChoices(item, selection, halves);
+  const pronto = missing.length === 0;
+  // Só dá para ajustar quantidade no card quando há uma única linha: com duas
+  // ou mais, quem manda é a revisão, linha a linha.
+  const unica = variantKeys.length === 1 ? variantKeys[0] : null;
+  // Se a configuração da tela já está no carrinho, este botão soma unidade
+  // numa linha existente em vez de criar outra.
+  const repetindo = variantKeys.includes(lineKey(item.id, selection, halves));
+  const quantasMetades = halvesRequirement(item, selection);
+
+  return (
+    <li
+      className={cn(
+        "overflow-hidden rounded-card border bg-white transition-shadow",
+        expanded ? "border-marca-600 shadow-card" : "border-borda",
+      )}
+    >
+      <div className="flex gap-3 p-4">
+        <div className="min-w-0 flex-1">
+          <p className="flex flex-wrap items-center gap-2 text-sm font-bold text-texto-forte">
+            {item.name}
+            {item.is_featured ? (
+              <span className="rounded-pill bg-destaque-500/25 px-2 py-0.5 text-xs font-bold text-marca-800">
+                destaque
+              </span>
+            ) : null}
+          </p>
+          {item.description ? (
+            <p className="mt-1 text-xs leading-relaxed text-texto-suave">
+              {item.description}
+            </p>
+          ) : null}
+
+          <p className="mt-2 flex flex-wrap items-baseline gap-2">
+            {onSale ? (
+              <span className="text-xs font-semibold text-texto-tenue line-through">
+                {formatBRL(item.compare_at_cents)}
+              </span>
+            ) : null}
+            <span
+              className={cn(
+                "text-lg font-black",
+                onSale ? "text-sucesso-700" : "text-marca-800",
+              )}
+            >
+              {formatBRL(item.price_cents)}
+            </span>
+          </p>
+
+          {/*
+            Produto com variação NÃO tem botão "Adicionar" aqui. Escolher
+            Tamanho/Borda/Extras é parte do pedido, não um extra opcional —
+            deixar o botão direto permitia entrar no carrinho incompleto e o
+            cliente só descobria o que faltou na revisão. O caminho é
+            "Personalizar" e, dentro do painel, o botão de adicionar.
+          */}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {hasOptions ? (
+              <>
+                <button
+                  type="button"
+                  onClick={onToggle}
+                  aria-expanded={expanded}
+                  className={cn(
+                    "min-h-10 rounded-pill px-4 text-xs font-bold transition-colors",
+                    expanded
+                      ? "border border-borda-forte text-texto-suave hover:border-marca-600 hover:text-marca-800"
+                      : "bg-marca-gradient text-white hover:opacity-90",
+                  )}
+                >
+                  {expanded ? "Fechar" : "Personalizar"}
+                </button>
+
+                {/* Duas ou mais configurações deste sabor já no carrinho: um
+                    único botão de quantidade aqui seria ambíguo, porque cada
+                    linha tem um tamanho e uma borda diferentes. A contagem
+                    informa o total e a revisão ajusta linha a linha. */}
+                {variantKeys.length > 1 ? (
+                  <span className="rounded-pill bg-marca-100 px-3 py-1.5 text-xs font-bold text-marca-800">
+                    {count} no carrinho
+                  </span>
+                ) : unica ? (
+                  <Stepper
+                    quantity={count}
+                    name={item.name}
+                    onChange={(delta) => onQuantity(unica, delta)}
+                  />
+                ) : null}
+              </>
+            ) : count > 0 && unica ? (
+              <Stepper
+                quantity={count}
+                name={item.name}
+                onChange={(delta) => onQuantity(unica, delta)}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={onAdd}
+                className="min-h-10 rounded-pill bg-marca-gradient px-5 text-xs font-bold text-white transition-opacity hover:opacity-90"
+              >
+                Adicionar
+              </button>
+            )}
+          </div>
+        </div>
+
+        {item.image_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={item.image_url}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            className="h-24 w-24 shrink-0 self-start rounded-logo object-cover sm:h-28 sm:w-28"
+          />
+        ) : null}
+      </div>
+
+      {expanded && hasOptions ? (
+        <div className="space-y-4 border-t border-borda bg-superficie p-4">
+          {item.option_groups.map((group) => {
+            const ids = selection[group.id] ?? [];
+            const falta = missing.includes(group.name);
+            return (
+              <fieldset key={group.id}>
+                <legend className="text-xs font-bold text-texto-forte">
+                  {group.name}
+                  {group.is_required ? (
+                    <span className="ml-1 text-erro-700">obrigatório</span>
+                  ) : group.min_select > 0 ? (
+                    <span className="ml-1 font-normal text-texto-tenue">
+                      escolha {group.min_select} a {group.max_select}
+                    </span>
+                  ) : (
+                    <span className="ml-1 font-normal text-texto-tenue">
+                      até {group.max_select}
+                    </span>
+                  )}
+                </legend>
+                <ul className="mt-2 flex flex-wrap gap-2">
+                  {group.values.map((value) => (
+                    <li key={value.id}>
+                      <button
+                        type="button"
+                        onClick={() => onSelect(group, value.id)}
+                        aria-pressed={ids.includes(value.id)}
+                        className={cn(
+                          "min-h-9 rounded-pill border px-4 text-xs font-semibold transition-colors",
+                          ids.includes(value.id)
+                            ? "border-marca-600 bg-marca-600 text-white"
+                            : cn(
+                                "border-borda-forte bg-white text-texto-forte hover:border-marca-600",
+                                falta && "border-erro/50",
+                              ),
+                        )}
+                      >
+                        {value.name}
+                        {value.price_delta_cents ? (
+                          <span
+                            className={cn(
+                              "ml-1",
+                              ids.includes(value.id)
+                                ? "text-white/80"
+                                : "text-marca-600",
+                            )}
+                          >
+                            {deltaLabel(value.price_delta_cents)}
+                          </span>
+                        ) : null}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </fieldset>
+            );
+          })}
+
+          {/*
+            Só aparece quando algum valor escolhido é "2 Sabores". Fica depois
+            dos grupos porque é consequência de uma escolha feita neles — abrir
+            antes faria o cliente procurar sabor em item que nem pediu ainda.
+
+            Cartões, não `<select>`: no celular um dropdown esconde o preço dos
+            outros sabores e custa dois toques para comparar, que é a única
+            razão de o meio a meio existir. Cada lado é escolhido aqui, com o
+            sabor base já escolhido em cima.
+          */}
+          {quantasMetades > 0 ? (
+            <fieldset className="rounded-card border border-marca-600/30 bg-white p-3">
+              <legend className="px-1 text-xs font-bold text-marca-800">
+                Escolha {quantasMetades === 2 ? "os dois sabores" : `${quantasMetades} sabores`}
+                <span className="ml-1 font-normal text-texto-suave">
+                  paga o mais caro
+                </span>
+              </legend>
+
+              {halfOptions.length === 0 ? (
+                <p className="mt-2 text-xs text-texto-suave">
+                  Ainda não há outros sabores disponíveis para esta seção.
+                </p>
+              ) : null}
+
+              <div className="mt-2 space-y-3">
+                {Array.from({ length: quantasMetades }, (_, posicao) => {
+                  const escolhido = halves[posicao] ?? 0;
+                  return (
+                    <div key={posicao}>
+                      <p className="text-[11px] font-bold uppercase tracking-wide text-texto-tenue">
+                        {posicao === 0 ? "1ª metade" : posicao === 1 ? "2ª metade" : `${posicao + 1}ª metade`}
+                      </p>
+                      <ul className="mt-1.5 flex flex-wrap gap-2">
+                        {halfOptions.map((option) => {
+                          const ativo = escolhido === option.id;
+                          return (
+                            <li key={option.id}>
+                              <button
+                                type="button"
+                                onClick={() => onHalf(posicao, option.id)}
+                                aria-pressed={ativo}
+                                className={cn(
+                                  "min-h-9 rounded-pill border px-3 py-1 text-xs font-semibold transition-colors",
+                                  ativo
+                                    ? "border-marca-600 bg-marca-600 text-white"
+                                    : "border-borda-forte bg-white text-texto-forte hover:border-marca-600",
+                                )}
+                              >
+                                {option.name}
+                                {/*
+                                  Só mostra o preço quando ele é maior que o da
+                                  base. Repetir R$ 45,00 em 14 cartões vizinhos
+                                  seria ruído; o que importa aqui é "esta
+                                  metade encarece o pedido".
+                                */}
+                                {option.price_cents > item.price_cents ? (
+                                  <span
+                                    className={cn(
+                                      "ml-1",
+                                      ativo ? "text-white/80" : "text-marca-600",
+                                    )}
+                                  >
+                                    {formatBRL(option.price_cents)}
+                                  </span>
+                                ) : null}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  );
+                })}
+              </div>
+            </fieldset>
+          ) : null}
+
+          {missing.length > 0 ? (
+            <p role="status" className="text-xs font-bold text-erro-700">
+              Escolha {missing.join(" e ")} para continuar.
+            </p>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={onAdd}
+            disabled={!pronto}
+            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-pill bg-marca-gradient px-5 text-sm font-bold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {repetindo ? "Adicionar mais" : "Adicionar ao carrinho"}
+            <span aria-hidden className="font-black">
+              {formatBRL(draftPrice(item, selection, halves, porId))}
+            </span>
+          </button>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+/** Passo de quantidade. Extraído porque aparece em dois ramos do `ItemCard`. */
+function Stepper({
+  quantity,
+  name,
+  onChange,
+}: {
+  quantity: number;
+  name: string;
+  onChange: (delta: number) => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-pill border border-marca-600 bg-marca-100">
+      <button
+        type="button"
+        onClick={() => onChange(-1)}
+        aria-label={`Diminuir ${name}`}
+        className="min-h-10 min-w-9 px-2 text-base font-bold text-marca-800"
+      >
+        −
+      </button>
+      <span className="min-w-4 text-center text-sm font-black text-marca-800">
+        {quantity}
+      </span>
+      <button
+        type="button"
+        onClick={() => onChange(1)}
+        aria-label={`Aumentar ${name}`}
+        className="min-h-10 min-w-9 px-2 text-base font-bold text-marca-800"
+      >
+        +
+      </button>
+    </span>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+function Review({
+  business,
+  citySlug,
+  lines,
+  porId,
+  onChangeQuantity,
+  onNotes,
+  subtotal,
+  deliveryFee,
+  total,
+  belowMinimum,
+  fulfillment,
+  setFulfillment,
+  payments,
+  payment,
+  setPayment,
+  state,
+  pending,
+  formAction,
+  onBack,
+}: {
+  business: StoreBusiness;
+  citySlug: string;
+  lines: Line[];
+  /** Cardápio indexado, para resolver e nomear as metades na revisão. */
+  porId: PorId;
+  onChangeQuantity: (key: string, delta: number) => void;
+  onNotes: (index: number, notes: string) => void;
+  subtotal: number;
+  deliveryFee: number;
+  total: number;
+  belowMinimum: boolean;
+  fulfillment: string;
+  setFulfillment: (value: string) => void;
+  payments: ReturnType<typeof availablePayments>;
+  payment: string;
+  setPayment: (value: string) => void;
+  state: OrderState;
+  pending: boolean;
+  formAction: (formData: FormData) => void;
+  onBack: () => void;
+}) {
+  const [ack, setAck] = useState(false);
+  const modes = business.fulfillment ?? [];
+  // O mínimo da empresa é sobre os itens, nunca sobre o total: a taxa de
+  // entrega entra na conta só na hora de pagar. Sem essa distinção o cliente
+  // vê "Total R$ 20,00" e "mínimo R$ 20,00" e não entende o bloqueio.
+  const faltando = Math.max(0, business.min_order_cents - subtotal);
+
+  return (
+    <div className="mx-auto w-full max-w-2xl px-4 py-8 lg:px-6">
+      <button
+        type="button"
+        onClick={onBack}
+        className="text-sm font-semibold text-texto-suave hover:text-marca-800"
+      >
+        ← Voltar ao cardápio
+      </button>
+      <h1 className="mt-3 text-2xl font-black text-marca-800">
+        Revisar pedido
+      </h1>
+
+      {state.error ? (
+        <p
+          role="alert"
+          className="mt-4 rounded-card border border-erro/30 bg-erro/5 px-4 py-3 text-sm font-semibold text-erro-700"
+        >
+          {state.error}
+        </p>
+      ) : null}
+
+      <ul className="mt-6 space-y-3">
+        {lines.map((line, index) => {
+          const unit = unitPrice(line, porId);
+          const missing = missingChoices(line.item, line.selection, line.halves);
+          const names = chosenNames(
+            line.item,
+            line.selection,
+            line.halves,
+            porId,
+          );
+
+          return (
+            <li
+              key={line.key}
+              className="rounded-card border border-borda bg-white p-4"
+            >
+              <div className="flex items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold text-texto-forte">
+                    {line.item.name}
+                  </p>
+                  {names.length > 0 ? (
+                    <p className="mt-0.5 text-xs text-texto-suave">
+                      {names.join(" · ")}
+                    </p>
+                  ) : null}
+                  {missing.length > 0 ? (
+                    <p role="alert" className="mt-1 text-xs font-bold text-erro-700">
+                      Falta escolher: {missing.join(", ")}
+                    </p>
+                  ) : null}
+                </div>
+
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="inline-flex items-center gap-1 rounded-pill border border-borda-forte">
+                    <button
+                      type="button"
+                      onClick={() => onChangeQuantity(line.key, -1)}
+                      aria-label={`Diminuir ${rotularLinha(line.item.name, names)}`}
+                      className="min-h-9 min-w-8 px-1 text-base font-bold text-texto-forte"
+                    >
+                      −
+                    </button>
+                    <span className="min-w-4 text-center text-sm font-black">
+                      {line.quantity}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onChangeQuantity(line.key, 1)}
+                      aria-label={`Aumentar ${rotularLinha(line.item.name, names)}`}
+                      className="min-h-9 min-w-8 px-1 text-base font-bold text-texto-forte"
+                    >
+                      +
+                    </button>
+                  </span>
+                  <p className="w-20 text-right text-sm font-black text-marca-800">
+                    {formatBRL(unit * line.quantity)}
+                  </p>
+                </div>
+              </div>
+
+              <label className="mt-3 block">
+                <span className="mb-1 block text-xs font-semibold text-texto-forte">
+                  Observação (opcional)
+                </span>
+                <input
+                  value={line.notes}
+                  maxLength={200}
+                  onChange={(event) => onNotes(index, event.target.value)}
+                  className="min-h-10 w-full rounded-logo border border-borda bg-white px-3 text-sm focus:border-marca-600"
+                  placeholder="Sem cebola, bem passada…"
+                />
+              </label>
+            </li>
+          );
+        })}
+      </ul>
+
+      <dl className="mt-6 space-y-1.5 border-t border-borda pt-4 text-sm">
+        <div className="flex justify-between">
+          <dt className="text-texto-suave">Subtotal</dt>
+          <dd className="font-semibold">{formatBRL(subtotal)}</dd>
+        </div>
+        <div className="flex justify-between">
+          <dt className="text-texto-suave">
+            {fulfillment === "delivery" ? "Taxa de entrega" : "Retirada no local"}
+          </dt>
+          <dd className="font-semibold">
+            {deliveryFee ? formatBRL(deliveryFee) : "grátis"}
+          </dd>
+        </div>
+        <div className="flex justify-between border-t border-borda pt-2 text-base">
+          <dt className="font-black text-marca-800">Total</dt>
+          <dd className="font-black text-marca-800">{formatBRL(total)}</dd>
+        </div>
+      </dl>
+
+      {modes.length === 0 ? (
+        <p
+          role="alert"
+          className="mt-6 rounded-card border border-aviso/40 bg-aviso/5 px-4 py-3 text-sm font-semibold text-texto-forte"
+        >
+          {business.name} não informed como os pedidos são entregues. Fale com a
+          empresa.
+        </p>
+      ) : (
+        <form action={formAction} className="mt-6 space-y-4">
+          <input type="hidden" name="businessId" value={business.id} />
+          <input type="hidden" name="fulfillment" value={fulfillment} />
+          <input type="hidden" name="paymentMethod" value={payment} />
+          <input
+            type="hidden"
+            name="lines"
+            value={JSON.stringify(
+              lines.map((line) => ({
+                productId: line.item.id,
+                quantity: line.quantity,
+                optionValueIds: Object.values(line.selection).flat(),
+                notes: line.notes,
+                halves: line.halves,
+              })),
+            )}
+          />
+
+          <fieldset>
+            <legend className="mb-2 text-sm font-bold text-texto-forte">
+              Como você quer receber?
+            </legend>
+            <div className="flex flex-wrap gap-2">
+              {modes.map((mode) => (
+                <Choice
+                  key={mode}
+                  active={fulfillment === mode}
+                  onClick={() => setFulfillment(mode)}
+                >
+                  {mode === "delivery" ? "Delivery" : "Retirar no local"}
+                </Choice>
+              ))}
+            </div>
+          </fieldset>
+
+          {fulfillment === "delivery" ? (
+            <Field
+              name="address"
+              label="Endereço de entrega"
+              error={state.fieldErrors.address}
+              placeholder="Rua, número, bairro, complemento"
+              required
+            />
+          ) : null}
+
+          <Field
+            name="customerName"
+            label="Seu nome"
+            error={state.fieldErrors.customerName}
+            required
+          />
+          <Field
+            name="customerPhone"
+            label="WhatsApp"
+            type="tel"
+            inputMode="tel"
+            error={state.fieldErrors.customerPhone}
+            placeholder="(00) 00000-0000"
+            required
+          />
+          <Field
+            name="customerEmail"
+            label="E-mail (opcional)"
+            type="email"
+            inputMode="email"
+            error={state.fieldErrors.customerEmail}
+          />
+
+          {payments.length > 0 ? (
+            <fieldset>
+              <legend className="mb-2 text-sm font-bold text-texto-forte">
+                Forma de pagamento
+              </legend>
+              <div className="flex flex-wrap gap-2">
+                {payments.map((method) => (
+                  <Choice
+                    key={method.enum}
+                    active={payment === method.enum}
+                    onClick={() => setPayment(method.enum)}
+                  >
+                    {method.label}
+                  </Choice>
+                ))}
+              </div>
+            </fieldset>
+          ) : null}
+
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-texto-forte">
+              Observação do pedido (opcional)
+            </span>
+            <textarea
+              name="notes"
+              rows={2}
+              maxLength={500}
+              className="min-h-10 w-full rounded-logo border border-borda bg-white px-3 py-2 text-sm focus:border-marca-600"
+              placeholder="Tocar o interfone, talheres a mais…"
+            />
+          </label>
+
+          {belowMinimum ? (
+            <p
+              role="alert"
+              className="rounded-card border border-aviso/40 bg-aviso/5 px-4 py-3 text-sm font-semibold text-texto-forte"
+            >
+              O pedido mínimo é de {formatBRL(business.min_order_cents)} em
+              itens. Faltam {formatBRL(faltando)} — a taxa de entrega não conta
+              para o mínimo.
+            </p>
+          ) : null}
+
+          <label
+            className={cn(
+              "flex items-start gap-2 text-sm text-texto-forte",
+              belowMinimum ? "cursor-not-allowed opacity-60" : "cursor-pointer",
+            )}
+          >
+            <input
+              type="checkbox"
+              checked={ack}
+              disabled={belowMinimum}
+              onChange={(event) => setAck(event.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-marca-800"
+            />
+            Confirmo que revisei os itens e as escolhas.
+          </label>
+
+          <button
+            type="submit"
+            disabled={pending || belowMinimum || !ack}
+            className="w-full rounded-pill bg-marca-gradient px-6 py-4 text-base font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {pending
+              ? "Enviando…"
+              : belowMinimum
+                ? `Faltam ${formatBRL(faltando)} para finalizar`
+                : `Finalizar pedido · ${formatBRL(total)}`}
+          </button>
+
+          {state.fieldErrors.lines ? (
+            <p role="alert" className="text-xs font-semibold text-erro-700">
+              {state.fieldErrors.lines}
+            </p>
+          ) : null}
+        </form>
+      )}
+
+      <p className="mt-6 text-center text-xs text-texto-tenue">
+        Ao finalizar, o pedido vai para{" "}
+        <Link
+          href={`/cidades/${citySlug}/empresa/${business.slug}`}
+          className="underline"
+        >
+          {business.name}
+        </Link>{" "}
+        confirmar.
+      </p>
+    </div>
+  );
+}
+
+function Choice({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "min-h-11 rounded-pill border px-5 text-sm font-semibold transition-colors",
+        active
+          ? "border-marca-600 bg-marca-100 text-marca-800"
+          : "border-borda-forte text-texto-suave hover:border-marca-600",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Field({
+  name,
+  label,
+  error,
+  type = "text",
+  required,
+  placeholder,
+  inputMode,
+}: {
+  name: string;
+  label: string;
+  error?: string;
+  type?: string;
+  required?: boolean;
+  placeholder?: string;
+  inputMode?: "tel" | "email" | "text";
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-semibold text-texto-forte">
+        {label}
+      </span>
+      <input
+        name={name}
+        type={type}
+        required={required}
+        placeholder={placeholder}
+        inputMode={inputMode}
+        aria-invalid={error ? true : undefined}
+        className="min-h-11 w-full rounded-logo border border-borda bg-white px-3 text-sm text-texto-forte focus:border-marca-600"
+      />
+      {error ? (
+        <span
+          role="alert"
+          className="mt-1 block text-xs font-semibold text-erro-700"
+        >
+          {error}
+        </span>
+      ) : null}
+    </label>
+  );
+}

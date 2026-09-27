@@ -1,0 +1,52 @@
+{
+  "name": "Tudo Agora - Tudo o que você procura, mais perto de você",
+  "short_name": "Tudo Agora",
+  "description": "Lojas, restaurantes, serviços e contatos úteis da sua cidade.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "lang": "pt-BR",
+  "dir": "ltr",
+  "background_color": "#ffffff",
+  "theme_color": "#001c7c",
+  "categories": ["shopping", "food", "lifestyle"],
+  "icons": [
+    {
+      "src": "/icone-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icone-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icone-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Buscar",
+      "short_name": "Buscar",
+      "url": "/busca"
+    },
+    {
+      "name": "Ofertas",
+      "short_name": "Ofertas",
+      "url": "/ofertas"
+    },
+    {
+      "name": "Minha conta",
+      "short_name": "Conta",
+      "url": "/minha-conta"
+    }
+  ]
+}

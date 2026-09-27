@@ -1,0 +1,159 @@
+@import "tailwindcss";
+
+/* ============================================================
+   TudoAgora — design tokens
+   Extraídos do CSS inline do site atual (WordPress/Elementor)
+   ============================================================ */
+
+@theme {
+  /* Azul institucional */
+  --color-marca-950: #00093b;
+  --color-marca-900: #001248;
+  --color-marca-800: #001c7c; /* base da marca */
+  --color-marca-700: #083baa;
+  --color-marca-600: #0069d6;
+  --color-marca-500: #00a0ff; /* superfície: gradiente e pulsos — nunca texto */
+  --color-marca-400: #4dc4ff;
+  --color-marca-100: #e6f2ff;
+
+  /* Amarelo CTA. `destaque-500/400` são preenchimento (botão sobre azul
+     escuro); `destaque-600` é o degrau de TEXTO — o amarelo puro da marca dá
+     1.4:1 no branco e some. */
+  --color-destaque-600: #8a7000;
+  --color-destaque-500: #ffd900;
+  --color-destaque-400: #ffe44d;
+  --color-destaque-100: #fff9d6;
+
+  /* Neutros. A escada tem três degraus e todos passam AA: 12.9 / 6.4 / 4.7
+     sobre branco. `tenue` é o degrau mais leve e só serve para texto
+     secundário — nunca para texto corrido. */
+  --color-texto: #263247;
+  --color-texto-forte: #171a21;
+  --color-texto-suave: #556072;
+  --color-texto-tenue: #697587;
+  --color-borda: #e6eaf0;
+  --color-borda-forte: #d6dbe5;
+  --color-superficie: #f6f8fb;
+  --color-superficie-2: #eef2f7;
+
+  /* Semânticos.
+     A base é preenchimento, borda e fundo translúcido (`/10`, `/15`).
+     `-700` é o degrau de TEXTO: é o único que passa 4.5:1 quando aplicado
+     sobre o próprio tint da base. Usar a base como texto dá 1.8:1 a 4.2:1
+     dependendo do status. */
+  --color-sucesso: #0f9d58;
+  --color-sucesso-700: #0b7a46;
+  --color-aviso: #f5a524;
+  --color-aviso-700: #a05c00;
+  --color-erro: #d92d20;
+  --color-erro-700: #b42318;
+  --color-info: #00a0ff;
+  --color-info-700: #0a6ec7;
+
+  /* Raios */
+  --radius-logo: 16px;
+  --radius-card: 18px;
+  --radius-media: 24px;
+  --radius-pill: 999px;
+
+  /* Sombras */
+  --shadow-card: 0 8px 24px rgba(0, 28, 124, 0.05);
+  --shadow-card-hover: 0 12px 28px rgba(0, 28, 124, 0.09);
+  --shadow-media: 0 20px 45px rgba(0, 28, 124, 0.14);
+
+  --font-sans: var(--font-open-sans), ui-sans-serif, system-ui, sans-serif;
+
+  --breakpoint-xs: 30rem;
+}
+
+/* Confirmação de item adicionado ao carrinho. Curta e discreta: o objetivo é
+   o cliente ter certeza de que o item entrou, não enfeitar a tela. O bloco
+   `prefers-reduced-motion` no fim do arquivo reduz tudo a 0.01ms. */
+@theme {
+  --animate-aviso-entra: aviso-entra 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  --animate-carrinho-pulso: carrinho-pulso 620ms cubic-bezier(0.22, 1, 0.36, 1);
+  --animate-check-pop: check-pop 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes aviso-entra {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes carrinho-pulso {
+  0% {
+    box-shadow: 0 0 0 0 rgba(0, 160, 255, 0.55);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 14px rgba(0, 160, 255, 0);
+  }
+}
+
+@keyframes check-pop {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+:root {
+  --gradient-marca: linear-gradient(
+    120deg,
+    #001c7c 0%,
+    #083baa 58%,
+    #00a0ff 100%
+  );
+}
+
+@utility bg-marca-gradient {
+  background-image: var(--gradient-marca);
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  color: var(--color-texto);
+  background: #fff;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Anel de foco único do sistema. Nenhum componente deve declarar
+   `outline-none`: enquanto existia, o teclado ficava sem indicador visível em
+   todo formulário do app. `marca-600` dá 5.3:1 contra o branco e 3:1+ contra
+   as superfícies coloridas onde o foco cai. */
+:focus-visible {
+  outline: 3px solid var(--color-marca-600);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

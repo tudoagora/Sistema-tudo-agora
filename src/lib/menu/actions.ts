@@ -1,0 +1,761 @@
+"use server";
+
+import { redirect } from "next/navigation";
+import type { Route } from "next";
+import { z } from "zod";
+
+import { revalidateMenu } from "@/lib/menu/revalidate";
+import type { MenuState, UploadState } from "@/lib/menu/state";
+import { safeNext } from "@/lib/next-redirect";
+import { slugify } from "@/lib/slug";
+import { createAdminClient } from "@/lib/supabase/admin";
+import type { Database } from "@/lib/supabase/database.types";
+import { createClient } from "@/lib/supabase/server";
+
+type MenuCategoryUpdate = Database["public"]["Tables"]["menu_categories"]["Update"];
+type ProductUpdate = Database["public"]["Tables"]["products"]["Update"];
+
+const NO_PERMISSION = "Você não gerencia esta empresa.";
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const IMAGE_EXT: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/avif": "avif",
+};
+
+/* ------------------------------------------------------------------ */
+/* Leitura do FormData                                                 */
+/* ------------------------------------------------------------------ */
+
+function text(formData: FormData, key: string): string {
+  return String(formData.get(key) ?? "").trim();
+}
+
+function num(formData: FormData, key: string, fallback = 0): number {
+  const raw = formData.get(key);
+  if (raw === null || raw === "") return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function int(formData: FormData, key: string, fallback = 0): number {
+  return Math.trunc(num(formData, key, fallback));
+}
+
+const toCents = (reais: number) => Math.max(0, Math.round(reais * 100));
+
+function friendly(error: { code?: string; message: string }): string {
+  if (error.code === "23505") return "Já existe um item com esse nome.";
+  if (error.code === "23503") return "Este registro não existe mais.";
+  if (error.code === "23514") return "Valor fora do permitido.";
+  if (error.code === "22001") return "O texto é longo demais.";
+  return error.message;
+}
+
+/**
+ * Devolve o cliente da sessão só para quem gerencia a empresa; `null` caso
+ * contrário.
+ *
+ * A checagem deixa o RLS decidir: `businesses_manage_read` (migration 0003) só
+ * devolve a linha para quem está em `business_members` ou tem perfil admin.
+ * Linha vazia já é a resposta "não", sem nenhuma comparação de papel
+ * duplicada aqui.
+ */
+async function clientFor(businessId: number) {
+  if (!Number.isInteger(businessId)) return null;
+  const supabase = await createClient();
+  const { data } = await supabase.auth.getUser();
+  if (!data.user) return null;
+
+  const { data: business } = await supabase
+    .from("businesses")
+    .select("id")
+    .eq("id", businessId)
+    .maybeSingle();
+
+  return business ? supabase : null;
+}
+
+/**
+ * Erro de uma action usada em `<form action={...}>` direto.
+ *
+ * Sem `useActionState` não existe estado para guardar a mensagem, e voltar
+ * com `{ error: null }` engolia a falha em silêncio (o que o editor antigo
+ * fazia). Redirecionar de volta com `?erro=` pelo menos mostra o motivo.
+ */
+function fail(formData: FormData, message: string): never {
+  const back = safeNext(text(formData, "backTo"));
+  const sep = back.includes("?") ? "&" : "?";
+  // O cast é o mesmo padrão de `requireUser`/`safeNext`: a query é montada em
+  // tempo de execução, então o literal não é provável pelo compilador.
+  redirect(`${back}${sep}erro=${encodeURIComponent(message)}` as Route);
+}
+
+/* ------------------------------------------------------------------ */
+/* Seções do cardápio                                                  */
+/* ------------------------------------------------------------------ */
+
+/** Slug único por empresa — `unique (business_id, slug)`. */
+async function uniqueSectionSlug(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  businessId: number,
+  name: string,
+  ignoreId?: number,
+): Promise<string> {
+  const base = slugify(name) || "secao";
+  const { data } = await supabase
+    .from("menu_categories")
+    .select("id, slug")
+    .eq("business_id", businessId);
+
+  const taken = new Set(
+    (data ?? []).filter((row) => row.id !== ignoreId).map((row) => row.slug),
+  );
+  let slug = base;
+  let n = 2;
+  while (taken.has(slug)) slug = `${base}-${n++}`;
+  return slug;
+}
+
+const sectionSchema = z.object({
+  name: z.string().trim().min(1, "Dê um nome à seção.").max(80),
+  description: z.string().trim().max(300).optional(),
+});
+
+export async function createMenuSection(
+  _prev: MenuState,
+  formData: FormData,
+): Promise<MenuState> {
+  const businessId = int(formData, "businessId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return { error: NO_PERMISSION };
+
+  const parsed = sectionSchema.safeParse({
+    name: formData.get("name"),
+    description: formData.get("description") || undefined,
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
+  }
+
+  const { name } = parsed.data;
+  const { data: existing } = await supabase
+    .from("menu_categories")
+    .select("id")
+    .eq("business_id", businessId);
+
+  const { error } = await supabase.from("menu_categories").insert({
+    business_id: businessId,
+    name,
+    description: parsed.data.description || null,
+    slug: await uniqueSectionSlug(supabase, businessId, name),
+    sort_order: (existing?.length ?? 0) + 1,
+  });
+
+  if (error) return { error: friendly(error) };
+  revalidateMenu(businessId);
+  return { error: null };
+}
+
+export async function updateMenuSection(formData: FormData) {
+  const id = int(formData, "id");
+  const businessId = int(formData, "businessId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return fail(formData, NO_PERMISSION);
+
+  const name = text(formData, "name");
+  if (!name) return fail(formData, "A seção precisa de um nome.");
+
+  const patch: MenuCategoryUpdate = {
+    name,
+    description: text(formData, "description") || null,
+    image_url: text(formData, "imageUrl") || null,
+    is_active: formData.get("isActive") === "on",
+  };
+
+  const { error } = await supabase
+    .from("menu_categories")
+    .update(patch)
+    .eq("id", id);
+  if (error) return fail(formData, friendly(error));
+
+  revalidateMenu(businessId);
+}
+
+/**
+ * Ativa/desativa a seção inteira. Some da vitrine sem apagar item nenhum —
+ * é o que a empresa usa quando um fornecedor acaba no meio da semana.
+ */
+export async function toggleMenuSection(formData: FormData) {
+  const id = int(formData, "id");
+  const businessId = int(formData, "businessId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return fail(formData, NO_PERMISSION);
+
+  const { error } = await supabase
+    .from("menu_categories")
+    .update({ is_active: formData.get("value") === "true" })
+    .eq("id", id);
+  if (error) return fail(formData, friendly(error));
+
+  revalidateMenu(businessId);
+}
+
+export async function moveMenuSection(formData: FormData) {
+  const id = int(formData, "id");
+  const businessId = int(formData, "businessId");
+  const direction = text(formData, "direction");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return fail(formData, NO_PERMISSION);
+
+  const { data } = await supabase
+    .from("menu_categories")
+    .select("id, sort_order")
+    .eq("business_id", businessId)
+    .order("sort_order");
+  const rows = data ?? [];
+
+  const index = rows.findIndex((row) => row.id === id);
+  const target = direction === "up" ? index - 1 : index + 1;
+  if (index < 0 || target < 0 || target >= rows.length) return;
+
+  await supabase
+    .from("menu_categories")
+    .update({ sort_order: rows[target].sort_order })
+    .eq("id", rows[index].id);
+  await supabase
+    .from("menu_categories")
+    .update({ sort_order: rows[index].sort_order })
+    .eq("id", rows[target].id);
+
+  revalidateMenu(businessId);
+}
+
+/**
+ * Excluir a seção não exclui os itens: `products.menu_category_id` é
+ * `on delete set null`, então eles sobram sem categoria e o editor avisa para
+ * mover antes. Apagar item a item seria pior para a empresa.
+ */
+export async function deleteMenuSection(formData: FormData) {
+  const id = int(formData, "id");
+  const businessId = int(formData, "businessId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return fail(formData, NO_PERMISSION);
+
+  const { error } = await supabase.from("menu_categories").delete().eq("id", id);
+  if (error) return fail(formData, friendly(error));
+
+  revalidateMenu(businessId);
+}
+
+/* ------------------------------------------------------------------ */
+/* Produtos                                                            */
+/* ------------------------------------------------------------------ */
+
+const productSchema = z.object({
+  name: z.string().trim().min(1, "Dê um nome ao item.").max(120),
+  description: z.string().trim().max(600).optional(),
+  priceReais: z.coerce.number().min(0).max(100000),
+  compareAtReais: z.coerce.number().min(0).max(100000),
+});
+
+/** Preço "de" só vale se for MAIOR que o preço "por", senão vira desconto ao contrário. */
+function productPricePatch(
+  parsed: z.infer<typeof productSchema>,
+): Pick<ProductUpdate, "price_cents" | "compare_at_cents"> {
+  const price = toCents(parsed.priceReais);
+  const compareAt = toCents(parsed.compareAtReais);
+  return {
+    price_cents: price,
+    compare_at_cents: compareAt > price ? compareAt : 0,
+  };
+}
+
+export async function createProduct(
+  _prev: MenuState,
+  formData: FormData,
+): Promise<MenuState> {
+  const businessId = int(formData, "businessId");
+  const menuCategoryId = int(formData, "menuCategoryId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return { error: NO_PERMISSION };
+
+  const parsed = productSchema.safeParse({
+    name: formData.get("name"),
+    description: formData.get("description") || undefined,
+    priceReais: formData.get("priceReais") || 0,
+    compareAtReais: formData.get("compareAtReais") || 0,
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
+  }
+  if (!Number.isInteger(menuCategoryId)) {
+    return { error: "Escolha a seção do item." };
+  }
+
+  const { data: last } = await supabase
+    .from("products")
+    .select("sort_order")
+    .eq("menu_category_id", menuCategoryId)
+    .order("sort_order", { ascending: false })
+    .limit(1);
+
+  const { error } = await supabase.from("products").insert({
+    business_id: businessId,
+    menu_category_id: menuCategoryId,
+    name: parsed.data.name,
+    description: parsed.data.description || null,
+    ...productPricePatch(parsed.data),
+    image_url: text(formData, "imageUrl") || null,
+    sort_order: (last?.[0]?.sort_order ?? 0) + 1,
+    source: "admin",
+  });
+
+  if (error) return { error: friendly(error) };
+  revalidateMenu(businessId);
+  return { error: null };
+}
+
+export async function updateProduct(formData: FormData) {
+  const id = int(formData, "id");
+  const businessId = int(formData, "businessId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return fail(formData, NO_PERMISSION);
+
+  const parsed = productSchema.safeParse({
+    name: formData.get("name"),
+    description: formData.get("description") || undefined,
+    priceReais: formData.get("priceReais") || 0,
+    compareAtReais: formData.get("compareAtReais") || 0,
+  });
+  if (!parsed.success) {
+    return fail(formData, parsed.error.issues[0]?.message ?? "Dados inválidos.");
+  }
+
+  const patch: ProductUpdate = {
+    name: parsed.data.name,
+    description: parsed.data.description || null,
+    ...productPricePatch(parsed.data),
+    image_url: text(formData, "imageUrl") || null,
+    is_available: formData.get("isAvailable") === "on",
+    is_featured: formData.get("isFeatured") === "on",
+  };
+
+  const { error } = await supabase.from("products").update(patch).eq("id", id);
+  if (error) return fail(formData, friendly(error));
+
+  revalidateMenu(businessId);
+}
+
+/** Pausar/voltar um item sem abrir a edição — o clique que o garçom precisa. */
+export async function toggleProductAvailability(formData: FormData) {
+  const id = int(formData, "id");
+  const businessId = int(formData, "businessId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return fail(formData, NO_PERMISSION);
+
+  const { error } = await supabase
+    .from("products")
+    .update({ is_available: formData.get("value") === "true" })
+    .eq("id", id);
+  if (error) return fail(formData, friendly(error));
+
+  revalidateMenu(businessId);
+}
+
+export async function toggleProductFeatured(formData: FormData) {
+  const id = int(formData, "id");
+  const businessId = int(formData, "businessId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return fail(formData, NO_PERMISSION);
+
+  const { error } = await supabase
+    .from("products")
+    .update({ is_featured: formData.get("value") === "true" })
+    .eq("id", id);
+  if (error) return fail(formData, friendly(error));
+
+  revalidateMenu(businessId);
+}
+
+export async function deleteProduct(formData: FormData) {
+  const id = int(formData, "id");
+  const businessId = int(formData, "businessId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return fail(formData, NO_PERMISSION);
+
+  const { error } = await supabase.from("products").delete().eq("id", id);
+  if (error) return fail(formData, friendly(error));
+
+  revalidateMenu(businessId);
+}
+
+export async function moveProduct(formData: FormData) {
+  const id = int(formData, "id");
+  const businessId = int(formData, "businessId");
+  const direction = text(formData, "direction");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return fail(formData, NO_PERMISSION);
+
+  const { data: product } = await supabase
+    .from("products")
+    .select("id, menu_category_id, sort_order")
+    .eq("id", id)
+    .maybeSingle();
+  if (!product?.menu_category_id) return;
+
+  const { data: siblings } = await supabase
+    .from("products")
+    .select("id, sort_order")
+    .eq("menu_category_id", product.menu_category_id)
+    .order("sort_order", { ascending: true });
+
+  const rows = siblings ?? [];
+  const index = rows.findIndex((row) => row.id === id);
+  const target = direction === "up" ? index - 1 : index + 1;
+  if (index < 0 || target < 0 || target >= rows.length) return;
+
+  await supabase
+    .from("products")
+    .update({ sort_order: rows[target].sort_order })
+    .eq("id", rows[index].id);
+  await supabase
+    .from("products")
+    .update({ sort_order: rows[index].sort_order })
+    .eq("id", rows[target].id);
+
+  revalidateMenu(businessId);
+}
+
+/* ------------------------------------------------------------------ */
+/* Imagens                                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Sobe a foto para o bucket `cardapio` e devolve a URL pública.
+ *
+ * O caminho é `cardapio/<business_id>/<uuid>.<ext>` — o `business_id` na
+ * frente é o que a policy `cardapio_manage` usa para checar o vínculo, então
+ * ele não pode ser omitido nem vir do cliente.
+ */
+export async function uploadImage(
+  _prev: UploadState,
+  formData: FormData,
+): Promise<UploadState> {
+  const businessId = int(formData, "businessId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return { url: null, error: NO_PERMISSION };
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    return { url: null, error: "Escolha uma imagem." };
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    return { url: null, error: "A foto passa de 5 MB. Reduza e tente de novo." };
+  }
+  const ext = IMAGE_EXT[file.type];
+  if (!ext) {
+    return { url: null, error: "Formato não aceito. Use JPG, PNG, WebP ou AVIF." };
+  }
+
+  const path = `${businessId}/${crypto.randomUUID()}.${ext}`;
+  const admin = createAdminClient();
+  const { error } = await admin.storage.from("cardapio").upload(path, file, {
+    contentType: file.type,
+    cacheControl: "31536000",
+    upsert: false,
+  });
+  if (error) return { url: null, error: `Falha no envio: ${error.message}` };
+
+  return {
+    url: admin.storage.from("cardapio").getPublicUrl(path).data.publicUrl,
+    error: null,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Grupos de opção (tamanho, borda, sabores)                           */
+/* ------------------------------------------------------------------ */
+
+const optionGroupSchema = z.object({
+  name: z.string().trim().min(1, "Dê um nome ao grupo.").max(60),
+  minSelect: z.coerce.number().int().min(0).max(10),
+  maxSelect: z.coerce.number().int().min(1).max(10),
+  isRequired: z.boolean(),
+});
+
+export async function createOptionGroup(
+  _prev: MenuState,
+  formData: FormData,
+): Promise<MenuState> {
+  const businessId = int(formData, "businessId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return { error: NO_PERMISSION };
+
+  const parsed = optionGroupSchema.safeParse({
+    name: formData.get("name"),
+    minSelect: formData.get("minSelect") || 0,
+    maxSelect: formData.get("maxSelect") || 1,
+    isRequired: formData.get("isRequired") === "on",
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
+  }
+  const data = parsed.data;
+  if (data.minSelect > data.maxSelect) {
+    return { error: "O mínimo não pode ser maior que o máximo." };
+  }
+
+  const { data: existing } = await supabase
+    .from("option_groups")
+    .select("id")
+    .eq("business_id", businessId);
+
+  const { error } = await supabase.from("option_groups").insert({
+    business_id: businessId,
+    name: data.name,
+    min_select: data.minSelect,
+    max_select: data.maxSelect,
+    is_required: data.isRequired,
+    sort_order: (existing?.length ?? 0) + 1,
+  });
+
+  if (error) return { error: friendly(error) };
+  revalidateMenu(businessId);
+  return { error: null };
+}
+
+export async function updateOptionGroup(formData: FormData) {
+  const id = int(formData, "id");
+  const businessId = int(formData, "businessId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return fail(formData, NO_PERMISSION);
+
+  const minSelect = int(formData, "minSelect");
+  const maxSelect = int(formData, "maxSelect");
+  if (minSelect > maxSelect) {
+    return fail(formData, "O mínimo não pode ser maior que o máximo.");
+  }
+
+  const { error } = await supabase
+    .from("option_groups")
+    .update({
+      name: text(formData, "name"),
+      min_select: Math.max(0, minSelect),
+      max_select: Math.max(1, maxSelect),
+      is_required: formData.get("isRequired") === "on",
+    })
+    .eq("id", id);
+  if (error) return fail(formData, friendly(error));
+
+  revalidateMenu(businessId);
+}
+
+export async function createOptionValue(
+  _prev: MenuState,
+  formData: FormData,
+): Promise<MenuState> {
+  const businessId = int(formData, "businessId");
+  const optionGroupId = int(formData, "optionGroupId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return { error: NO_PERMISSION };
+
+  const parsed = z
+    .object({
+      name: z.string().trim().min(1, "Informe o nome da opção.").max(60),
+      deltaReais: z.coerce.number().min(-10000).max(10000),
+      halves: z.coerce.number().int().min(0).max(3).default(0),
+    })
+    .safeParse({
+      name: formData.get("name"),
+      deltaReais: formData.get("deltaReais") || 0,
+      // Vazio = pizza inteira, que é o que todo valor tem por padrão. Sem o
+      // `|| 0`, `z.coerce.number()` receberia "" e transformaria em NaN.
+      halves: formData.get("halves") || 0,
+    });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
+  }
+  if (!Number.isInteger(optionGroupId)) {
+    return { error: "Grupo de opção inválido." };
+  }
+
+  const { data: existing } = await supabase
+    .from("option_values")
+    .select("id")
+    .eq("option_group_id", optionGroupId);
+
+  const { error } = await supabase.from("option_values").insert({
+    option_group_id: optionGroupId,
+    name: parsed.data.name,
+    // Delta negativo é legítimo: "sem borda" costuma custar menos.
+    price_delta_cents: Math.round(parsed.data.deltaReais * 100),
+    // "2 Sabores" = 2. A regra de preço (paga o mais caro) mora na vitrine e
+    // no `placeOrder`; aqui só diz quantas metades este valor exige.
+    halves_count: parsed.data.halves,
+    sort_order: (existing?.length ?? 0) + 1,
+  });
+
+  if (error) return { error: friendly(error) };
+  revalidateMenu(businessId);
+  return { error: null };
+}
+
+export async function toggleOptionValue(formData: FormData) {
+  const id = int(formData, "id");
+  const businessId = int(formData, "businessId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return fail(formData, NO_PERMISSION);
+
+  const { error } = await supabase
+    .from("option_values")
+    .update({ is_available: formData.get("value") === "true" })
+    .eq("id", id);
+  if (error) return fail(formData, friendly(error));
+
+  revalidateMenu(businessId);
+}
+
+export async function deleteOptionValue(formData: FormData) {
+  const id = int(formData, "id");
+  const businessId = int(formData, "businessId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return fail(formData, NO_PERMISSION);
+
+  const { error } = await supabase.from("option_values").delete().eq("id", id);
+  if (error) return fail(formData, friendly(error));
+
+  revalidateMenu(businessId);
+}
+
+/**
+ * Troca a ordem de dois valores dentro do mesmo grupo.
+ *
+ * `option_values` não tem `business_id` — a empresa vem do grupo, então a
+ * permissão é conferida(andando a cadeia) em vez de lida de uma coluna.
+ */
+export async function moveOptionValue(formData: FormData) {
+  const id = int(formData, "id");
+  const businessId = int(formData, "businessId");
+  const direction = text(formData, "direction");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return fail(formData, NO_PERMISSION);
+
+  const { data: value } = await supabase
+    .from("option_values")
+    .select("id, option_group_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (!value) return;
+
+  const { data: group } = await supabase
+    .from("option_groups")
+    .select("id, business_id")
+    .eq("id", value.option_group_id)
+    .maybeSingle();
+  if (group?.business_id !== businessId) return;
+
+  const { data } = await supabase
+    .from("option_values")
+    .select("id, sort_order")
+    .eq("option_group_id", value.option_group_id)
+    .order("sort_order", { ascending: true });
+  const rows = data ?? [];
+
+  const index = rows.findIndex((row) => row.id === id);
+  const target = direction === "up" ? index - 1 : index + 1;
+  if (index < 0 || target < 0 || target >= rows.length) return;
+
+  await supabase
+    .from("option_values")
+    .update({ sort_order: rows[target].sort_order })
+    .eq("id", rows[index].id);
+  await supabase
+    .from("option_values")
+    .update({ sort_order: rows[index].sort_order })
+    .eq("id", rows[target].id);
+
+  revalidateMenu(businessId);
+}
+
+export async function deleteOptionGroup(formData: FormData) {
+  const id = int(formData, "id");
+  const businessId = int(formData, "businessId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return fail(formData, NO_PERMISSION);
+
+  const { error } = await supabase.from("option_groups").delete().eq("id", id);
+  if (error) return fail(formData, friendly(error));
+
+  revalidateMenu(businessId);
+}
+
+/**
+ * Troca a ordem dos grupos — é a ordem em que o cliente responde "Tamanho,
+ * Borda, Molho, Extras" no pedido.
+ */
+export async function moveOptionGroup(formData: FormData) {
+  const id = int(formData, "id");
+  const businessId = int(formData, "businessId");
+  const direction = text(formData, "direction");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return fail(formData, NO_PERMISSION);
+
+  const { data } = await supabase
+    .from("option_groups")
+    .select("id, sort_order")
+    .eq("business_id", businessId)
+    .order("sort_order");
+  const rows = data ?? [];
+
+  const index = rows.findIndex((row) => row.id === id);
+  const target = direction === "up" ? index - 1 : index + 1;
+  if (index < 0 || target < 0 || target >= rows.length) return;
+
+  await supabase
+    .from("option_groups")
+    .update({ sort_order: rows[target].sort_order })
+    .eq("id", rows[index].id);
+  await supabase
+    .from("option_groups")
+    .update({ sort_order: rows[index].sort_order })
+    .eq("id", rows[target].id);
+
+  revalidateMenu(businessId);
+}
+
+export async function linkProductToOptionGroup(formData: FormData) {
+  const businessId = int(formData, "businessId");
+  const optionGroupId = int(formData, "optionGroupId");
+  const productId = int(formData, "productId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return fail(formData, NO_PERMISSION);
+  if (!Number.isInteger(optionGroupId) || !Number.isInteger(productId)) {
+    return fail(formData, "Vínculo inválido.");
+  }
+
+  const { error } = await supabase
+    .from("product_option_groups")
+    .upsert({ product_id: productId, option_group_id: optionGroupId });
+  if (error) return fail(formData, friendly(error));
+
+  revalidateMenu(businessId);
+}
+
+export async function unlinkProductFromOptionGroup(formData: FormData) {
+  const businessId = int(formData, "businessId");
+  const optionGroupId = int(formData, "optionGroupId");
+  const productId = int(formData, "productId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return fail(formData, NO_PERMISSION);
+
+  const { error } = await supabase
+    .from("product_option_groups")
+    .delete()
+    .eq("product_id", productId)
+    .eq("option_group_id", optionGroupId);
+  if (error) return fail(formData, friendly(error));
+
+  revalidateMenu(businessId);
+}

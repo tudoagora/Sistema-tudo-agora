@@ -1,0 +1,51 @@
+/**
+ * Tipos do editor de cardápio.
+ *
+ * Vivem aqui (e não no componente) porque as duas páginas que montam o editor —
+ * `/admin/empresas/[id]/cardapio` e `/painel/[empresa]/cardapio` — precisam
+ * dos mesmos nomes de campo, e o `MenuEditor` é compartilhado entre elas.
+ */
+export type MenuSection = {
+  id: number;
+  name: string;
+  slug: string;
+  description: string | null;
+  image_url: string | null;
+  is_active: boolean;
+  sort_order: number;
+};
+
+export type MenuProduct = {
+  id: number;
+  menu_category_id: number | null;
+  name: string;
+  description: string | null;
+  price_cents: number;
+  compare_at_cents: number;
+  image_url: string | null;
+  is_available: boolean;
+  is_featured: boolean;
+  sort_order: number;
+};
+
+export type MenuGroup = {
+  id: number;
+  name: string;
+  min_select: number;
+  max_select: number;
+  is_required: boolean;
+  sort_order: number;
+};
+
+export type MenuValue = {
+  id: number;
+  option_group_id: number;
+  name: string;
+  price_delta_cents: number;
+  /** Metades que o cliente precisa escolher ao marcar este valor. 0 = nenhuma. */
+  halves_count: number;
+  is_available: boolean;
+  sort_order: number;
+};
+
+export type MenuLink = { product_id: number; option_group_id: number };
