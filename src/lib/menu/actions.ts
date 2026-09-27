@@ -487,6 +487,7 @@ const optionGroupSchema = z.object({
   minSelect: z.coerce.number().int().min(0).max(10),
   maxSelect: z.coerce.number().int().min(1).max(10),
   isRequired: z.boolean(),
+  isFlavorGroup: z.boolean(),
 });
 
 export async function createOptionGroup(
@@ -502,6 +503,7 @@ export async function createOptionGroup(
     minSelect: formData.get("minSelect") || 0,
     maxSelect: formData.get("maxSelect") || 1,
     isRequired: formData.get("isRequired") === "on",
+    isFlavorGroup: formData.get("isFlavorGroup") === "on",
   });
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
@@ -522,6 +524,7 @@ export async function createOptionGroup(
     min_select: data.minSelect,
     max_select: data.maxSelect,
     is_required: data.isRequired,
+    is_flavor_group: data.isFlavorGroup,
     sort_order: nextSortOrder((existing ?? []).map((row) => row.sort_order)),
   });
 
@@ -549,6 +552,7 @@ export async function updateOptionGroup(formData: FormData) {
       min_select: Math.max(0, minSelect),
       max_select: Math.max(1, maxSelect),
       is_required: formData.get("isRequired") === "on",
+      is_flavor_group: formData.get("isFlavorGroup") === "on",
     })
     .eq("id", id);
   if (error) return fail(formData, friendly(error));
@@ -569,14 +573,10 @@ export async function createOptionValue(
     .object({
       name: z.string().trim().min(1, "Informe o nome da opção.").max(60),
       deltaReais: z.coerce.number().min(-10000).max(10000),
-      halves: z.coerce.number().int().min(0).max(3).default(0),
     })
     .safeParse({
       name: formData.get("name"),
       deltaReais: formData.get("deltaReais") || 0,
-      // Vazio = pizza inteira, que é o que todo valor tem por padrão. Sem o
-      // `|| 0`, `z.coerce.number()` receberia "" e transformaria em NaN.
-      halves: formData.get("halves") || 0,
     });
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
@@ -593,11 +593,10 @@ export async function createOptionValue(
   const { error } = await supabase.from("option_values").insert({
     option_group_id: optionGroupId,
     name: parsed.data.name,
-    // Delta negativo é legítimo: "sem borda" costuma custar menos.
+    // Em grupo comum é um acréscimo (negativo é legítimo: "sem borda" custa
+    // menos). Em grupo de sabores (`is_flavor_group`) é o preço cheio do sabor;
+    // a regra de cobrar o mais caro mora na vitrine e no `placeOrder`.
     price_delta_cents: Math.round(parsed.data.deltaReais * 100),
-    // "2 Sabores" = 2. A regra de preço (paga o mais caro) mora na vitrine e
-    // no `placeOrder`; aqui só diz quantas metades este valor exige.
-    halves_count: parsed.data.halves,
     sort_order: nextSortOrder((existing ?? []).map((row) => row.sort_order)),
   });
 

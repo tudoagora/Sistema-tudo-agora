@@ -799,6 +799,20 @@ export function MenuEditor({
             />
             Obrigatório
           </label>
+          <label className="mt-2 flex cursor-pointer items-start gap-2 text-sm text-texto-forte">
+            <input
+              type="checkbox"
+              name="isFlavorGroup"
+              className="mt-0.5 h-4 w-4 accent-marca-800"
+            />
+            <span>
+              Grupo de sabores (pizza)
+              <span className="block text-xs font-normal text-texto-suave">
+                Cada opção informa o preço cheio do sabor e o cliente paga o mais
+                caro entre os escolhidos. Use no grupo &quot;Sabores&quot; de cada tamanho.
+              </span>
+            </span>
+          </label>
           <ErrorNote error={groupState.error} />
           <button type="submit" disabled={groupPending} className={`mt-4 ${primaryButton}`}>
             {groupPending ? "Criando…" : "Criar grupo"}
@@ -1470,23 +1484,16 @@ function OptionGroupCard({
                           }`}
                         >
                           {value.name}
-                          {value.price_delta_cents ? (
+                          {group.is_flavor_group ? (
+                            // Grupo de sabores: o valor guarda o preço cheio do
+                            // sabor, não um acréscimo — mostra sem o "+".
+                            <span className="ml-1 text-marca-600">
+                              {formatBRL(value.price_delta_cents)}
+                            </span>
+                          ) : value.price_delta_cents ? (
                             <span className="ml-1 text-marca-600">
                               {value.price_delta_cents > 0 ? "+" : ""}
                               {formatBRL(value.price_delta_cents)}
-                            </span>
-                          ) : null}
-                          {value.halves_count > 0 ? (
-                            // Sem este badge o lojista não tem como conferir, depois
-                            // de fechar o editor, que "2 Sabores" está de fato pedindo
-                            // duas metades. E o efeito é silencioso: o grupo aparece
-                            // configurado, o cliente vê o seletor, e a cozinha recebe
-                            // a pizza errada se alguma coisa do meio do caminho cair.
-                            <span
-                              className="ml-1 rounded-pill bg-marca-100 px-1.5 py-0.5 text-[10px] font-bold text-marca-800"
-                              title="Meio a meio: quando o cliente escolhe esta opção, precisa escolher os sabores de cada metade"
-                            >
-                              {value.halves_count}×
                             </span>
                           ) : null}
                           <MiniArrowButton
@@ -1600,6 +1607,21 @@ function OptionGroupCard({
                 />
                 Obrigatório
               </label>
+              <label className="flex cursor-pointer items-start gap-2 text-sm text-texto-forte sm:col-span-3">
+                <input
+                  type="checkbox"
+                  name="isFlavorGroup"
+                  defaultChecked={group.is_flavor_group}
+                  className="mt-0.5 h-4 w-4 accent-marca-800"
+                />
+                <span>
+                  Grupo de sabores (pizza)
+                  <span className="block text-xs font-normal text-texto-suave">
+                    Cada opção informa o preço cheio do sabor e o cliente paga o
+                    mais caro entre os escolhidos.
+                  </span>
+                </span>
+              </label>
               <div className="sm:col-span-3">
                 <button type="submit" className={primaryButton}>
                   Salvar grupo
@@ -1627,9 +1649,9 @@ function OptionGroupCard({
                 placeholder="Catupiry"
               />
             </div>
-            <div className="w-28">
+            <div className="w-32">
               <label htmlFor={`v-delta-${group.id}`} className={label}>
-                Acréscimo (R$)
+                {group.is_flavor_group ? "Preço do sabor (R$)" : "Acréscimo (R$)"}
               </label>
               <input
                 id={`v-delta-${group.id}`}
@@ -1639,28 +1661,6 @@ function OptionGroupCard({
                 defaultValue="0.00"
                 className={input}
               />
-            </div>
-            {/*
-              Só faz sentido em grupo de sabor, mas o campo aparece sempre: o
-              lojista cria "2 Sabores" antes de pensar em ligar o grupo aos
-              produtos, e esconder o campo atrás de uma detecção de nome
-              adivinhada seria pior.
-            */}
-            <div className="w-32">
-              <label htmlFor={`v-halves-${group.id}`} className={label}>
-                Metades que exige
-              </label>
-              <select
-                id={`v-halves-${group.id}`}
-                name="halves"
-                defaultValue="0"
-                className={input}
-              >
-                <option value="0">0 — pizza inteira</option>
-                <option value="1">1 — metade única</option>
-                <option value="2">2 — meio a meio</option>
-                <option value="3">3 — três metades</option>
-              </select>
             </div>
             <button
               type="submit"

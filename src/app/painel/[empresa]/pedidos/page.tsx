@@ -47,7 +47,6 @@ type OrderRow = {
     unit_price_cents: number;
     notes: string | null;
     order_item_options: OrderItemOption[] | null;
-    order_item_halves: { product_name: string; position: number }[] | null;
   }[] | null;
 };
 
@@ -94,8 +93,9 @@ export default async function PanelOrdersPage(
     .select(
       // `order_item_options` traz o grupo e o valor como texto — é o snapshot
       // do que o cliente escolheu. Sem esse nível aninhado o lojista via só
-      // "1× Pizza Margherita" e não tinha como saber o tamanho nem a borda.
-      "id, public_id, customer_name, customer_phone, fulfillment, status, payment_method, payment_status, total_cents, created_at, notes, address, cancellation_reason, order_items(id, product_name, quantity, unit_price_cents, notes, order_item_options(id, option_group_name, option_value_name, price_delta_cents), order_item_halves(product_name, position))",
+      // "1× Pizza Grande - 3 sabores" e não tinha como saber quais sabores nem
+      // a borda.
+      "id, public_id, customer_name, customer_phone, fulfillment, status, payment_method, payment_status, total_cents, created_at, notes, address, cancellation_reason, order_items(id, product_name, quantity, unit_price_cents, notes, order_item_options(id, option_group_name, option_value_name, price_delta_cents))",
     )
     .eq("business_id", business.id)
     .order("created_at", { ascending: false })
@@ -234,12 +234,6 @@ export default async function PanelOrdersPage(
                   <ul className="mt-3 space-y-2.5 border-t border-borda pt-3">
                     {items.map((item) => {
                       const grupos = groupItemOptions(item.order_item_options);
-                      // A ordem gravada é a que o cliente escolheu: 1ª metade é a
-                      // esquerda. Inverter aqui entregaria metade a mais de um
-                      // sabor e a menos de outro.
-                      const metades = [...(item.order_item_halves ?? [])].sort(
-                        (a, b) => a.position - b.position,
-                      );
                       return (
                         <li key={item.id} className="text-xs">
                           <div className="flex items-baseline justify-between gap-3">
@@ -250,19 +244,6 @@ export default async function PanelOrdersPage(
                               {formatBRL(item.unit_price_cents * item.quantity)}
                             </p>
                           </div>
-
-                          {/*
-                            Meio a meio vem antes das opções e em destaque
-                            próprio. É a informação que muda o que a cozinha
-                            monta: "meio a meio" escondido numa lista de
-                            opções é o que produz a Margherita inteira no lugar
-                            do pedido.
-                          */}
-                          {metades.length > 0 ? (
-                            <p className="mt-1 rounded-pill bg-destaque-500/20 px-2 py-0.5 font-bold text-marca-800">
-                              Meio a meio: {metades.map((m) => m.product_name).join(" / ")}
-                            </p>
-                          ) : null}
 
                           {grupos.length > 0 ? (
                             <ul className="mt-1 space-y-0.5">

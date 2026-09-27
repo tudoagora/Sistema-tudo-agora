@@ -48,13 +48,13 @@ export async function loadMenuEditorData(
         .order("sort_order"),
       supabase
         .from("option_groups")
-        .select("id, name, min_select, max_select, is_required, sort_order")
+        .select("id, name, min_select, max_select, is_required, is_flavor_group, sort_order")
         .eq("business_id", businessId)
         .order("sort_order"),
       supabase
         .from("option_values")
         .select(
-          "id, option_group_id, name, price_delta_cents, halves_count, is_available, sort_order",
+          "id, option_group_id, name, price_delta_cents, is_available, sort_order",
         )
         .order("sort_order"),
       supabase

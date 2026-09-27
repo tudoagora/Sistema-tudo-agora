@@ -19,20 +19,20 @@ import {
 } from "@/lib/format";
 import { availablePayments } from "@/lib/order";
 import {
-  eligibleHalves,
-  halvesLabel,
-  halvesRequirement,
+  flavorGroupOf,
+  fromPriceCents,
   lineUnitPriceCents,
-  type HalfItemLike,
-} from "@/lib/halves";
+} from "@/lib/pricing";
 import { cn } from "@/lib/utils";
 
 type OptionValue = {
   id: number;
   name: string;
+  /**
+   * Acréscimo sobre o preço do produto — ou o PREÇO CHEIO do sabor quando o
+   * valor pertence a um grupo com `is_flavor_group`.
+   */
   price_delta_cents: number;
-  /** Metades que este valor exige. `0` = pizza inteira, sem seletor. */
-  halves_count: number;
 };
 type OptionGroup = {
   id: number;
@@ -40,6 +40,8 @@ type OptionGroup = {
   min_select: number;
   max_select: number;
   is_required: boolean;
+  /** Grupo "Sabores": preço cheio por sabor, cobra o mais caro. */
+  is_flavor_group: boolean;
   values: OptionValue[];
 };
 export type StoreItem = {
@@ -92,32 +94,20 @@ type Line = {
   key: string;
   item: StoreItem;
   quantity: number;
-  /** groupId -> valueIds escolhidos */
+  /** groupId -> valueIds escolhidos (inclui os sabores, que são opções) */
   selection: Record<number, number[]>;
-  /** Product ids das metades, na ordem escolhida. Vazio para pizza inteira. */
-  halves: number[];
   notes: string;
 };
-
-/** Todo o cardápio indexado, para resolver ids de metade em O(1). */
-type PorId = ReadonlyMap<number, HalfItemLike>;
 
 /**
  * Assinatura estável do conjunto de opções — a identidade da linha.
  *
  * A ordem dentro do grupo não conta: escolher "média" e depois "grande" dá a
  * mesma chave que escolher "grande" e depois "média", então o passo de
- * quantidade continua somando na linha certa em vez de criar duplicata.
- *
- * As metades entram ordenadas do mesmo jeito pelo mesmo motivo — o que
- * diferencia duas linhas é o conjunto de sabores, não a ordem em que o cliente
- * os tocou.
+ * quantidade continua somando na linha certa em vez de criar duplicata. Os
+ * sabores entram aqui como qualquer outra opção.
  */
-function lineKey(
-  itemId: number,
-  selection: Record<number, number[]>,
-  halves: readonly number[] = [],
-) {
+function lineKey(itemId: number, selection: Record<number, number[]>) {
   const grupos = Object.keys(selection)
     .map(Number)
     .sort((a, b) => a - b)
@@ -128,8 +118,7 @@ function lineKey(
           .join(".")}`,
     )
     .join("|");
-  const sabores = [...halves].sort((a, b) => a - b).join(".");
-  return `p${itemId}#${grupos}#${sabores}`;
+  return `p${itemId}#${grupos}`;
 }
 
 const initialState: OrderState = { code: null, error: null, fieldErrors: {} };
@@ -149,31 +138,22 @@ function deltaLabel(cents: number): string {
   return `${cents > 0 ? "+" : "−"}${formatBRL(Math.abs(cents))}`;
 }
 
-/** Preço já com as opções e as metades — mesma conta que a action refaz. */
-function unitPrice(line: Line, porId: PorId): number {
-  return lineUnitPriceCents(line.item, line.selection, line.halves, porId);
+/** Preço já com os sabores e as opções — mesma conta que a action refaz. */
+function unitPrice(line: Line): number {
+  return lineUnitPriceCents(line.item, line.selection);
 }
 
 function missingChoices(
   item: StoreItem,
   selection: Record<number, number[]>,
-  halves: readonly number[],
 ) {
   const missing: string[] = [];
   for (const group of item.option_groups) {
     // `is_required` com `min_select = 0` é um grupo que precisa de ao menos
-    // uma escolha — o rótulo "obrigatório" já avisa isso na tela.
+    // uma escolha — o rótulo "obrigatório" já avisa isso na tela. O grupo de
+    // sabores cai aqui também: mín 1 obriga escolher ao menos um sabor.
     const minimo = Math.max(group.min_select, group.is_required ? 1 : 0);
     if ((selection[group.id] ?? []).length < minimo) missing.push(group.name);
-  }
-  // "2 Sabores" escolhido sem as duas metades é a lacuna que faria o cliente
-  // pagar por uma pizza inteira e a cozinha receber uma só. Entra na lista de
-  // faltantes com o nome do próprio grupo, que é o texto que o cliente lê.
-  if (halves.length < halvesRequirement(item, selection)) {
-    const grupo = item.option_groups.find((g) =>
-      g.values.some((v) => v.halves_count > 0),
-    );
-    missing.push(grupo?.name ?? "os sabores");
   }
   return missing;
 }
@@ -182,26 +162,19 @@ function missingChoices(
 function draftPrice(
   item: StoreItem,
   selection: Record<number, number[]>,
-  halves: readonly number[],
-  porId: PorId,
 ): number {
-  return lineUnitPriceCents(item, selection, halves, porId);
+  return lineUnitPriceCents(item, selection);
 }
 
 function chosenNames(
   item: StoreItem,
   selection: Record<number, number[]>,
-  halves: readonly number[],
-  porId: PorId,
 ) {
-  const nomes = item.option_groups.flatMap((group) =>
+  return item.option_groups.flatMap((group) =>
     (selection[group.id] ?? [])
       .map((id) => group.values.find((value) => value.id === id)?.name)
       .filter((name): name is string => Boolean(name)),
   );
-  const meioAMeio = halvesLabel(halves, porId);
-  if (meioAMeio) nomes.push(meioAMeio);
-  return nomes;
 }
 
 /**
@@ -231,36 +204,11 @@ export function Storefront({
     [sections],
   );
 
-  /**
-   * O cardápio inteiro indexado. Meio a meio precisa consultar produtos que
-   * podem estar em outra linha da grade — o cliente monta "meio a meio
-   * Margherita + Quatro Queijos" na Margherita, e o Quatro Queijos está 4
-   * posições abaixo. Filtrar `section.items` só na hora do render refaria esse
-   * filtro a cada item e a cada re-render.
-   */
-  const porId = useMemo<PorId>(() => {
-    const mapa = new Map<number, StoreItem>();
-    for (const section of sections) {
-      for (const item of section.items) mapa.set(item.id, item);
-    }
-    return mapa;
-  }, [sections]);
-
   const [lines, setLines] = useState<Line[]>([]);
   /** Escolhas em andamento antes de o item entrar no carrinho. */
   const [drafts, setDrafts] = useState<Record<number, Record<number, number[]>>>(
     {},
   );
-  /**
-   * Metades em andamento, por item: `itemId -> [saborId, saborId]`.
-   *
-   * Vive separado de `drafts` porque a chave de identificação de uma escolha de
-   * opção é o valueId, e o de uma metade é o productId — misturar os dois no
-   * mesmo objeto produziria `Record<number, number[]>` onde o número às vezes
-   * é um e às vezes é outro, e o bug apareceria só com grupo de sabor
-   * configurado.
-   */
-  const [halfDrafts, setHalfDrafts] = useState<Record<number, number[]>>({});
   /**
    * Seção destacada no menu de navegação. Não esconde nada: todas as seções
    * ficam na página, o botão só rola até ela. Abas de verdade escondiam 16 dos
@@ -317,7 +265,7 @@ export function Storefront({
 
   const totalCount = lines.reduce((sum, line) => sum + line.quantity, 0);
   const subtotal = lines.reduce(
-    (sum, line) => sum + unitPrice(line, porId) * line.quantity,
+    (sum, line) => sum + unitPrice(line) * line.quantity,
     0,
   );
   const deliveryFee =
@@ -334,7 +282,6 @@ export function Storefront({
     setPlacedCode(state.code);
     setLines([]);
     setDrafts({});
-    setHalfDrafts({});
     setCustomizing(null);
     setReviewing(false);
   }
@@ -352,71 +299,34 @@ export function Storefront({
     });
   }
 
-  /**
-   * Metades do rascunho, aparadas ao que a escolha atual exige.
-   *
-   * Derivar em vez de sincronizar: `halfDrafts` guarda o que o cliente tocou,
-   * e quem decide o que vale é a seleção do grupo de sabor no mesmo render.
-   * Limpar o estado no clique daria a leitura errada — o updater do `setDrafts`
-   * ainda enxerga a seleção anterior — e o sintoma apareceria só ao trocar
-   * "2 Sabores" por "1 Sabor", que é o caminho que o próprio texto do grupo
-   * convida a percorrer.
-   */
-  function metadesDoRascunho(
-    item: StoreItem,
-    selection: Record<number, number[]>,
-  ): number[] {
-    const exigido = halvesRequirement(item, selection);
-    if (exigido === 0) return [];
-    // `0` é o marcador de posição vazia que `setHalf` usa enquanto o cliente
-    // não escolheu aquele lado.
-    return (halfDrafts[item.id] ?? []).filter((id) => id !== 0).slice(0, exigido);
-  }
-
-  /** Marca a metade `posicao` do item, trocando o sabor anterior se houver. */
-  function setHalf(item: StoreItem, posicao: number, productId: number) {
-    setHalfDrafts((current) => {
-      const atuais = current[item.id] ?? [];
-      const proximas = [...atuais];
-      while (proximas.length <= posicao) proximas.push(0);
-      proximas[posicao] = proximas[posicao] === productId ? 0 : productId;
-      // Sem ids nulos sobrando: a ordem importa para a cozinha, mas buracos
-      // não são uma ordem que o cliente possa ter pedido.
-      while (proximas.length > 0 && proximas[proximas.length - 1] === 0) {
-        proximas.pop();
-      }
-      return { ...current, [item.id]: proximas };
-    });
-  }
-
   function add(item: StoreItem) {
     const selection = drafts[item.id] ?? {};
-    const halves = metadesDoRascunho(item, selection);
 
     // Rede de segurança: item com variação só entra no carrinho depois de
     // escolhida. A UI já esconde o botão, mas `add` é o único portão — se
-    // algum caminho novo a chamar, o item não sai incompleto daqui.
-    if (missingChoices(item, selection, halves).length > 0) {
+    // algum caminho novo a chamar, o item não sai incompleto daqui. Os sabores
+    // são um grupo de opção (mín 1), então já caem nesta checagem.
+    if (missingChoices(item, selection).length > 0) {
       setCustomizing(item.id);
       return;
     }
 
-    const key = lineKey(item.id, selection, halves);
+    const key = lineKey(item.id, selection);
     const igual = lines.find((line) => line.key === key);
     const quantidade = igual ? Math.min(99, igual.quantity + 1) : 1;
 
     setLines((current) => {
       const found = current.find((line) => line.key === key);
       // Mesma configuração: soma na linha existente. Configuração diferente
-      // vira linha nova, e é isso que permite pedir o mesmo sabor duas vezes
-      // com tamanhos e bordas distintos.
+      // vira linha nova, e é isso que permite pedir o mesmo tamanho duas vezes
+      // com sabores e bordas distintos.
       return found
         ? current.map((line) =>
             line.key === key
               ? { ...line, quantity: Math.min(99, line.quantity + 1) }
               : line,
           )
-        : [...current, { key, item, quantity: 1, selection, halves, notes: "" }];
+        : [...current, { key, item, quantity: 1, selection, notes: "" }];
     });
 
     // Zera o rascunho e fecha o painel: o item vai para a barra de carrinho
@@ -427,17 +337,12 @@ export function Storefront({
       delete proximo[item.id];
       return proximo;
     });
-    setHalfDrafts((current) => {
-      const proximo = { ...current };
-      delete proximo[item.id];
-      return proximo;
-    });
     setCustomizing(null);
     setAdded({
       seq: addedSeq.current++,
       name: item.name,
-      detail: chosenNames(item, selection, halves, porId).join(" · "),
-      total: draftPrice(item, selection, halves, porId) * quantidade,
+      detail: chosenNames(item, selection).join(" · "),
+      total: draftPrice(item, selection) * quantidade,
     });
   }
 
@@ -508,7 +413,6 @@ export function Storefront({
         business={business}
         citySlug={citySlug}
         lines={lines}
-        porId={porId}
         onChangeQuantity={changeQuantity}
         onNotes={setNotes}
         subtotal={subtotal}
@@ -659,7 +563,7 @@ export function Storefront({
 
                 <ul className="mt-4 grid gap-3 sm:grid-cols-2">
                   {section.items.map((item) => {
-                    // O mesmo sabor pode estar em várias linhas do carrinho,
+                    // O mesmo tamanho pode estar em várias linhas do carrinho,
                     // cada uma com uma configuração de opções diferente.
                     const doItem = lines.filter(
                       (line) => line.item.id === item.id,
@@ -670,9 +574,6 @@ export function Storefront({
                         key={item.id}
                         item={item}
                         selection={selection}
-                        halves={metadesDoRascunho(item, selection)}
-                        halfOptions={eligibleHalves(item, section.items)}
-                        porId={porId}
                         count={doItem.reduce((s, l) => s + l.quantity, 0)}
                         variantKeys={doItem.map((line) => line.key)}
                         expanded={customizing === item.id}
@@ -681,9 +582,6 @@ export function Storefront({
                         }
                         onSelect={(group, valueId) =>
                           toggleDraft(item, group, valueId)
-                        }
-                        onHalf={(posicao, productId) =>
-                          setHalf(item, posicao, productId)
                         }
                         onAdd={() => add(item)}
                         onQuantity={(key, delta) => changeQuantity(key, delta)}
@@ -773,51 +671,43 @@ export function Storefront({
 function ItemCard({
   item,
   selection,
-  halves,
-  halfOptions,
-  porId,
   count,
   variantKeys,
   expanded,
   onToggle,
   onSelect,
-  onHalf,
   onAdd,
   onQuantity,
 }: {
   item: StoreItem;
   selection: Record<number, number[]>;
-  /** Metades já escolhidas neste rascunho, na ordem dos lados. */
-  halves: number[];
-  /** Quem pode ser metade deste item: mesma seção, exceto ele mesmo. */
-  halfOptions: StoreItem[];
-  /** Cardápio indexado, para o preço do rascunho resolver as metades. */
-  porId: PorId;
   /** Quantas unidades deste produto estão no carrinho, somando as linhas. */
   count: number;
   /**
    * Chaves das linhas deste produto. Mais de uma significa configurações
-   * diferentes (tamanho, borda) do mesmo sabor já no carrinho.
+   * diferentes (sabores, borda) do mesmo tamanho já no carrinho.
    */
   variantKeys: string[];
   expanded: boolean;
   onToggle: () => void;
   onSelect: (group: OptionGroup, valueId: number) => void;
-  onHalf: (posicao: number, productId: number) => void;
   onAdd: () => void;
   onQuantity: (key: string, delta: number) => void;
 }) {
   const onSale = item.compare_at_cents > item.price_cents;
   const hasOptions = item.option_groups.length > 0;
-  const missing = missingChoices(item, selection, halves);
+  const missing = missingChoices(item, selection);
   const pronto = missing.length === 0;
   // Só dá para ajustar quantidade no card quando há uma única linha: com duas
   // ou mais, quem manda é a revisão, linha a linha.
   const unica = variantKeys.length === 1 ? variantKeys[0] : null;
   // Se a configuração da tela já está no carrinho, este botão soma unidade
   // numa linha existente em vez de criar outra.
-  const repetindo = variantKeys.includes(lineKey(item.id, selection, halves));
-  const quantasMetades = halvesRequirement(item, selection);
+  const repetindo = variantKeys.includes(lineKey(item.id, selection));
+  // Produto de tamanho mostra "a partir de" (o sabor mais barato); os demais
+  // mostram o preço cheio.
+  const temSabores = flavorGroupOf(item) !== null;
+  const precoExibido = fromPriceCents(item);
 
   return (
     <li
@@ -848,13 +738,18 @@ function ItemCard({
                 {formatBRL(item.compare_at_cents)}
               </span>
             ) : null}
+            {temSabores ? (
+              <span className="text-xs font-semibold text-texto-suave">
+                a partir de
+              </span>
+            ) : null}
             <span
               className={cn(
                 "text-lg font-black",
                 onSale ? "text-sucesso-700" : "text-marca-800",
               )}
             >
-              {formatBRL(item.price_cents)}
+              {formatBRL(precoExibido)}
             </span>
           </p>
 
@@ -933,15 +828,12 @@ function ItemCard({
           {item.option_groups.map((group) => {
             const ids = selection[group.id] ?? [];
             const falta = missing.includes(group.name);
-            // O grupo que traz "2 Sabores" abre o seletor de metades logo
-            // abaixo dele. Os dois blocos voltam como irmãos dentro do
-            // `space-y-4` do painel, e é isso que mantém o espaçamento igual
-            // ao de antes.
-            const abreMetades = group.values.some(
-              (value) => value.halves_count > 0,
-            );
-            return [
-              <fieldset key="opcoes">
+            // No grupo de sabores cada valor mostra o PREÇO CHEIO daquele sabor
+            // (não um acréscimo), e a pizza cobra o mais caro entre os
+            // escolhidos. Nos demais grupos o valor é um acréscimo (+R$ …).
+            const sabores = group.is_flavor_group;
+            return (
+              <fieldset key={group.id}>
                 <legend className="text-xs font-bold text-texto-forte">
                   {group.name}
                   {group.is_required ? (
@@ -955,6 +847,11 @@ function ItemCard({
                       até {group.max_select}
                     </span>
                   )}
+                  {sabores ? (
+                    <span className="ml-1 font-normal text-marca-600">
+                      · paga o mais caro
+                    </span>
+                  ) : null}
                 </legend>
                 <ul className="mt-2 flex flex-wrap gap-2">
                   {group.values.map((value) => (
@@ -974,7 +871,18 @@ function ItemCard({
                         )}
                       >
                         {value.name}
-                        {value.price_delta_cents ? (
+                        {sabores ? (
+                          <span
+                            className={cn(
+                              "ml-1",
+                              ids.includes(value.id)
+                                ? "text-white/80"
+                                : "text-marca-600",
+                            )}
+                          >
+                            {formatBRL(value.price_delta_cents)}
+                          </span>
+                        ) : value.price_delta_cents ? (
                           <span
                             className={cn(
                               "ml-1",
@@ -990,18 +898,8 @@ function ItemCard({
                     </li>
                   ))}
                 </ul>
-              </fieldset>,
-              abreMetades && quantasMetades > 0 ? (
-                <HalfPicker
-                  key="metades"
-                  quantasMetades={quantasMetades}
-                  halfOptions={halfOptions}
-                  halves={halves}
-                  basePriceCents={item.price_cents}
-                  onPick={onHalf}
-                />
-              ) : null,
-            ];
+              </fieldset>
+            );
           })}
 
           {missing.length > 0 ? (
@@ -1018,104 +916,12 @@ function ItemCard({
           >
             {repetindo ? "Adicionar mais" : "Adicionar ao carrinho"}
             <span aria-hidden className="font-black">
-              {formatBRL(draftPrice(item, selection, halves, porId))}
+              {formatBRL(draftPrice(item, selection))}
             </span>
           </button>
         </div>
       ) : null}
     </li>
-  );
-}
-
-/**
- * Seletor de metades ("Escolha os dois sabores").
- *
- * Vive num componente próprio — como `Stepper` e `Review` — porque agora é
- * renderizado dentro do `map` dos grupos: ele nasce colado ao grupo que traz
- * "2 Sabores", e não no fim da lista. Com Borda e Extras no meio do caminho, o
- * cliente marcava "2 Sabores" e o passo seguinte aparecia fora da tela, sem
- * nada indicando que faltava escolher.
- *
- * Cartões, não `<select>`: no celular um dropdown esconde o preço dos outros
- * sabores e custa dois toques para comparar, que é a única razão de o meio a
- * meio existir.
- */
-function HalfPicker({
-  quantasMetades,
-  halfOptions,
-  halves,
-  basePriceCents,
-  onPick,
-}: {
-  quantasMetades: number;
-  halfOptions: StoreItem[];
-  halves: readonly number[];
-  basePriceCents: number;
-  onPick: (posicao: number, productId: number) => void;
-}) {
-  return (
-    <fieldset className="rounded-card border border-marca-600/30 bg-white p-3">
-      <legend className="px-1 text-xs font-bold text-marca-800">
-        Escolha {quantasMetades === 2 ? "os dois sabores" : `${quantasMetades} sabores`}
-        <span className="ml-1 font-normal text-texto-suave">paga o mais caro</span>
-      </legend>
-
-      {halfOptions.length === 0 ? (
-        <p className="mt-2 text-xs text-texto-suave">
-          Ainda não há outros sabores disponíveis para esta seção.
-        </p>
-      ) : null}
-
-      <div className="mt-2 space-y-3">
-        {Array.from({ length: quantasMetades }, (_, posicao) => {
-          const escolhido = halves[posicao] ?? 0;
-          return (
-            <div key={posicao}>
-              <p className="text-[11px] font-bold uppercase tracking-wide text-texto-tenue">
-                {posicao === 0 ? "1ª metade" : posicao === 1 ? "2ª metade" : `${posicao + 1}ª metade`}
-              </p>
-              <ul className="mt-1.5 flex flex-wrap gap-2">
-                {halfOptions.map((option) => {
-                  const ativo = escolhido === option.id;
-                  return (
-                    <li key={option.id}>
-                      <button
-                        type="button"
-                        onClick={() => onPick(posicao, option.id)}
-                        aria-pressed={ativo}
-                        className={cn(
-                          "min-h-9 rounded-pill border px-3 py-1 text-xs font-semibold transition-colors",
-                          ativo
-                            ? "border-marca-600 bg-marca-600 text-white"
-                            : "border-borda-forte bg-white text-texto-forte hover:border-marca-600",
-                        )}
-                      >
-                        {option.name}
-                        {/*
-                          Só mostra o preço quando ele é maior que o da base.
-                          Repetir R$ 45,00 em 14 cartões vizinhos seria ruído; o
-                          que importa aqui é "esta metade encarece o pedido".
-                        */}
-                        {option.price_cents > basePriceCents ? (
-                          <span
-                            className={cn(
-                              "ml-1",
-                              ativo ? "text-white/80" : "text-marca-600",
-                            )}
-                          >
-                            {formatBRL(option.price_cents)}
-                          </span>
-                        ) : null}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          );
-        })}
-      </div>
-    </fieldset>
   );
 }
 
@@ -1160,7 +966,6 @@ function Review({
   business,
   citySlug,
   lines,
-  porId,
   onChangeQuantity,
   onNotes,
   subtotal,
@@ -1180,8 +985,6 @@ function Review({
   business: StoreBusiness;
   citySlug: string;
   lines: Line[];
-  /** Cardápio indexado, para resolver e nomear as metades na revisão. */
-  porId: PorId;
   onChangeQuantity: (key: string, delta: number) => void;
   onNotes: (index: number, notes: string) => void;
   subtotal: number;
@@ -1229,14 +1032,9 @@ function Review({
 
       <ul className="mt-6 space-y-3">
         {lines.map((line, index) => {
-          const unit = unitPrice(line, porId);
-          const missing = missingChoices(line.item, line.selection, line.halves);
-          const names = chosenNames(
-            line.item,
-            line.selection,
-            line.halves,
-            porId,
-          );
+          const unit = unitPrice(line);
+          const missing = missingChoices(line.item, line.selection);
+          const names = chosenNames(line.item, line.selection);
 
           return (
             <li
@@ -1346,7 +1144,6 @@ function Review({
                 quantity: line.quantity,
                 optionValueIds: Object.values(line.selection).flat(),
                 notes: line.notes,
-                halves: line.halves,
               })),
             )}
           />

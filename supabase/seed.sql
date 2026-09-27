@@ -392,14 +392,17 @@ where b.legacy_wp_id = 2172;
 -- ATENÇÃO: no WP `pizza-config` devolvia [] — bordas e sabores NUNCA foram
 -- cadastrados. Estes são placeholders para validar com o lojista antes de
 -- ir para produção. "Sabores" fica sem valores de propósito.
-insert into public.option_groups (business_id, name, min_select, max_select, is_required, sort_order)
-select b.id, v.name, v.min_select, v.max_select, v.is_required, v.sort_order
+-- `is_flavor_group = true` só no "Sabores": os valores desse grupo terão
+-- preço cheio (a pizza cobra o sabor mais caro entre os escolhidos), enquanto
+-- Tamanho e Borda seguem somando acréscimos.
+insert into public.option_groups (business_id, name, min_select, max_select, is_required, sort_order, is_flavor_group)
+select b.id, v.name, v.min_select, v.max_select, v.is_required, v.sort_order, v.is_flavor_group
 from public.businesses b
 join (values
-  ('Tamanho',  1, 1, true,  1),
-  ('Borda',    1, 1, true,  2),
-  ('Sabores',  1, 4, false, 3)
-) as v(name, min_select, max_select, is_required, sort_order) on true
+  ('Tamanho',  1, 1, true,  1, false),
+  ('Borda',    1, 1, true,  2, false),
+  ('Sabores',  1, 4, false, 3, true)
+) as v(name, min_select, max_select, is_required, sort_order, is_flavor_group) on true
 where b.legacy_wp_id = 2172;
 
 insert into public.option_values (option_group_id, name, price_delta_cents, sort_order)

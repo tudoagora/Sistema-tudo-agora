@@ -191,13 +191,13 @@ isOneToOne: false
                   ]
                 },"option_groups": {
                   Row: {
-                    "business_id": number,"id": number,"is_required": boolean,"max_select": number,"min_select": number,"name": string,"sort_order": number
+                    "business_id": number,"id": number,"is_flavor_group": boolean,"is_required": boolean,"max_select": number,"min_select": number,"name": string,"sort_order": number
                   }
                   Insert: {
-                    "business_id": number,"id"?: number,"is_required"?: boolean,"max_select"?: number,"min_select"?: number,"name": string,"sort_order"?: number
+                    "business_id": number,"id"?: number,"is_flavor_group"?: boolean,"is_required"?: boolean,"max_select"?: number,"min_select"?: number,"name": string,"sort_order"?: number
                   }
                   Update: {
-                    "business_id"?: number,"id"?: number,"is_required"?: boolean,"max_select"?: number,"min_select"?: number,"name"?: string,"sort_order"?: number
+                    "business_id"?: number,"id"?: number,"is_flavor_group"?: boolean,"is_required"?: boolean,"max_select"?: number,"min_select"?: number,"name"?: string,"sort_order"?: number
                   }
                   Relationships: [
                     {
@@ -210,13 +210,13 @@ isOneToOne: false
                   ]
                 },"option_values": {
                   Row: {
-                    "halves_count": number,"id": number,"is_available": boolean,"name": string,"option_group_id": number,"price_delta_cents": number,"sort_order": number
+                    "id": number,"is_available": boolean,"name": string,"option_group_id": number,"price_delta_cents": number,"sort_order": number
                   }
                   Insert: {
-                    "halves_count"?: number,"id"?: number,"is_available"?: boolean,"name": string,"option_group_id": number,"price_delta_cents"?: number,"sort_order"?: number
+                    "id"?: number,"is_available"?: boolean,"name": string,"option_group_id": number,"price_delta_cents"?: number,"sort_order"?: number
                   }
                   Update: {
-                    "halves_count"?: number,"id"?: number,"is_available"?: boolean,"name"?: string,"option_group_id"?: number,"price_delta_cents"?: number,"sort_order"?: number
+                    "id"?: number,"is_available"?: boolean,"name"?: string,"option_group_id"?: number,"price_delta_cents"?: number,"sort_order"?: number
                   }
                   Relationships: [
                     {
@@ -224,31 +224,6 @@ isOneToOne: false
       columns: ["option_group_id"]
 isOneToOne: false
       referencedRelation: "option_groups"
-      referencedColumns: ["id"]
-    }
-                  ]
-                },"order_item_halves": {
-                  Row: {
-                    "id": number,"order_item_id": number,"position": number,"price_cents": number,"product_id": number | null,"product_name": string
-                  }
-                  Insert: {
-                    "id"?: number,"order_item_id": number,"position": number,"price_cents": number,"product_id"?: number | null,"product_name": string
-                  }
-                  Update: {
-                    "id"?: number,"order_item_id"?: number,"position"?: number,"price_cents"?: number,"product_id"?: number | null,"product_name"?: string
-                  }
-                  Relationships: [
-                    {
-      foreignKeyName: "order_item_halves_order_item_id_fkey"
-      columns: ["order_item_id"]
-isOneToOne: false
-      referencedRelation: "order_items"
-      referencedColumns: ["id"]
-    },{
-      foreignKeyName: "order_item_halves_product_id_fkey"
-      columns: ["product_id"]
-isOneToOne: false
-      referencedRelation: "products"
       referencedColumns: ["id"]
     }
                   ]

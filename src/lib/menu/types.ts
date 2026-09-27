@@ -34,6 +34,8 @@ export type MenuGroup = {
   min_select: number;
   max_select: number;
   is_required: boolean;
+  /** Grupo "Sabores": valores com preço cheio, pizza cobra o mais caro. */
+  is_flavor_group: boolean;
   sort_order: number;
 };
 
@@ -41,9 +43,11 @@ export type MenuValue = {
   id: number;
   option_group_id: number;
   name: string;
+  /**
+   * Acréscimo sobre o preço do produto — ou o PREÇO CHEIO do sabor quando o
+   * valor pertence a um grupo com `is_flavor_group`.
+   */
   price_delta_cents: number;
-  /** Metades que o cliente precisa escolher ao marcar este valor. 0 = nenhuma. */
-  halves_count: number;
   is_available: boolean;
   sort_order: number;
 };

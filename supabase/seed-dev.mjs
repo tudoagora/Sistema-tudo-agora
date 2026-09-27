@@ -109,30 +109,38 @@ async function main() {
   console.log("secoes  ", Object.keys(catIds).length);
 
   const groups = {};
-  const mkGroup = async (name, min, max, required, sort, values) => {
+  // isFlavor marca o grupo como "sabores": os valores passam a ter preço
+  // CHEIO em price_delta_cents e a pizza cobra o sabor mais caro entre os
+  // escolhidos (modelo Yooga). Um grupo de sabores por tamanho, porque o
+  // preço do sabor muda com o tamanho da pizza.
+  const mkGroup = async (name, min, max, required, sort, values, isFlavor = false) => {
     const [g] = await rows("option_groups", {
-      business_id: biz.id, name, min_select: min, max_select: max, is_required: required, sort_order: sort,
+      business_id: biz.id, name, min_select: min, max_select: max, is_required: required, sort_order: sort, is_flavor_group: isFlavor,
     });
     groups[name] = g.id;
     for (const [i, [vname, delta, available]] of values.entries()) {
       await rows("option_values", { option_group_id: g.id, name: vname, price_delta_cents: delta, is_available: available, sort_order: i + 1 });
     }
   };
-  await mkGroup("Tamanho", 1, 1, true, 1, [["Pequena - 4 fatias", 0, true], ["Media - 6 fatias", 1500, true], ["Grande - 8 fatias", 3000, true]]);
-  await mkGroup("Borda", 0, 1, false, 2, [["Sem borda", 0, true], ["Catupiry", 800, true], ["Cheddar", 900, true], ["Portuguesa", 1200, true]]);
-  await mkGroup("Molho", 1, 1, true, 3, [["Molho de tomate", 0, true], ["Molho branco", 300, true], ["Molho pesto", 400, true]]);
-  await mkGroup("Extras", 0, 3, false, 4, [["Bacon", 700, true], ["Milho", 500, false], ["Azeitona", 500, true], ["Catupiry extra", 700, true]]);
+  await mkGroup("Borda", 0, 1, false, 1, [["Sem borda", 0, true], ["Catupiry", 800, true], ["Cheddar", 900, true], ["Portuguesa", 1200, true]]);
+  await mkGroup("Molho", 1, 1, true, 2, [["Molho de tomate", 0, true], ["Molho branco", 300, true], ["Molho pesto", 400, true]]);
+  await mkGroup("Extras", 0, 3, false, 3, [["Bacon", 700, true], ["Milho", 500, false], ["Azeitona", 500, true], ["Catupiry extra", 700, true]]);
+  await mkGroup("Sabores - Media", 1, 2, true, 4, [["Margherita", 4000, true], ["Calabresa", 4300, true], ["Portuguesa", 4700, true], ["Quatro Queijos", 5000, true], ["Vegetariana", 4600, true]], true);
+  await mkGroup("Sabores - Grande", 1, 3, true, 5, [["Margherita", 4500, true], ["Calabresa", 4800, true], ["Portuguesa", 5200, true], ["Quatro Queijos", 5500, true], ["Vegetariana", 5100, true]], true);
+  await mkGroup("Sabores - Familia", 1, 4, true, 6, [["Margherita", 6000, true], ["Calabresa", 6300, true], ["Portuguesa", 6700, true], ["Quatro Queijos", 7000, true], ["Vegetariana", 6600, true]], true);
   console.log("grupos  ", Object.keys(groups).length);
 
+  // O produto da seção "pizzas" agora é o TAMANHO/FORMATO, não o sabor: o
+  // cliente escolhe os sabores ao abrir o produto. price_cents fica com o
+  // sabor mais barato — é o "a partir de" que a vitrine mostra quando o
+  // grupo de sabores some (fallback), mas o card já calcula do grupo.
   const products = [
     ["entradas", "Paes de alho", "4 unidades assadas no forno com manteiga e ervas.", 1200, 0, false, true, 1, null],
     ["entradas", "Batata frita crocante", "Porcao de 400g com sal e páprica.", 1800, 2200, false, true, 2, null],
     ["entradas", "Bruschetta", "Quatro fatias com tomate, alho e manjericao.", 2100, 0, false, true, 3, null],
-    ["pizzas", "Pizza Margherita", "Molho de tomate, muçarela e manjericão fresco.", 4500, 5200, true, true, 1, ["Tamanho", "Borda"]],
-    ["pizzas", "Pizza Calabresa", "Molho de tomate, muçarela, calabresa e cebola.", 4800, 0, false, true, 2, ["Tamanho", "Borda"]],
-    ["pizzas", "Pizza Portuguesa", "Presunto, ovos, cebola, pimentao e ervilhas.", 5200, 0, false, true, 3, ["Tamanho", "Borda", "Extras"]],
-    ["pizzas", "Pizza Quatro Queijos", "Muçarela, gorgonzola, parmesao e catupiry.", 5500, 6200, true, true, 4, ["Tamanho", "Borda", "Molho", "Extras"]],
-    ["pizzas", "Pizza Vegetariana", "Abobrinha, pimentao, cogumelo, milho e ervas.", 5100, 0, false, true, 5, ["Tamanho", "Borda", "Extras"]],
+    ["pizzas", "Pizza Media - 2 sabores", "6 fatias. Escolha ate 2 sabores; paga o valor do sabor mais caro.", 4000, 0, false, true, 1, ["Sabores - Media", "Borda", "Molho", "Extras"]],
+    ["pizzas", "Pizza Grande - 3 sabores", "8 fatias. Escolha ate 3 sabores; paga o valor do sabor mais caro.", 4500, 5200, true, true, 2, ["Sabores - Grande", "Borda", "Molho", "Extras"]],
+    ["pizzas", "Pizza Familia - 4 sabores", "12 fatias. Escolha ate 4 sabores; paga o valor do sabor mais caro.", 6000, 0, false, true, 3, ["Sabores - Familia", "Borda", "Molho", "Extras"]],
     ["bebidas", "Coca-Cola Lata 350ml", "Bem gelada.", 600, 0, false, true, 1, null],
     ["bebidas", "Guarana Antarctica 350ml", "Bem gelado.", 600, 0, false, true, 2, null],
     ["bebidas", "Suco de laranja natural 500ml", "Feito na hora, sem acucar.", 900, 0, false, true, 3, null],
@@ -140,7 +148,7 @@ async function main() {
     ["bebidas", "Cerveja long neck", "Heineken, Brahma ou Original.", 900, 1200, false, true, 5, null],
     ["sobremesas", "Petit Gateau", "Bolinho quente com sorvete de creme.", 1600, 0, false, true, 1, null],
     ["sobremesas", "Picole de creme", "Picole artesanal de creme com cobertura.", 800, 0, false, true, 2, null],
-    ["combos", "Combo Familia - 2 pizzas", "Duas pizzas de meio sabor + refrigerante lata.", 9900, 11500, true, true, 1, null],
+    ["combos", "Combo Familia - 2 pizzas", "Duas pizzas medias de 2 sabores + refrigerante lata.", 9900, 11500, true, true, 1, null],
     ["combos", "Combo Individual", "Uma pizza media + refrigerante + sobremesa.", 6800, 0, false, true, 2, null],
     ["promocoes", "Terca em Dobro", "Na terca, duas pizzas grandes pelo preco de uma.", 9900, 0, true, true, 1, null],
     ["promocoes", "Borda gratis na quarta", "Toda pizza com borda catupiry por nossa conta.", 0, 0, false, false, 2, null],

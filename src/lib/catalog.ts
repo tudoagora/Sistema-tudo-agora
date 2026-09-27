@@ -58,13 +58,12 @@ export type Business = Row & {
 export type MenuItemOptionValue = {
   id: number;
   name: string;
-  price_delta_cents: number;
   /**
-   * Quantas metades este valor exige. `0` é o caso comum e significa "pizza
-   * inteira, sem seletor de sabor" — é o que faz "1 Sabor" não abrir nada.
-   * `2` em "2 Sabores" abre dois seletores de metade.
+   * Acréscimo sobre o preço do produto — EXCETO nos valores de um grupo de
+   * sabores (`is_flavor_group`), onde guarda o PREÇO CHEIO daquele sabor
+   * naquele tamanho. A regra de combinar pelo mais caro mora em `pricing.ts`.
    */
-  halves_count: number;
+  price_delta_cents: number;
 };
 
 export type MenuItemOptionGroup = {
@@ -73,6 +72,12 @@ export type MenuItemOptionGroup = {
   min_select: number;
   max_select: number;
   is_required: boolean;
+  /**
+   * `true` no grupo "Sabores" de uma pizza: os valores têm preço cheio e a
+   * pizza cobra o mais caro entre os escolhidos. `false` nos grupos de
+   * acréscimo (tamanho, borda, extras), somados normalmente.
+   */
+  is_flavor_group: boolean;
   values: MenuItemOptionValue[];
 };
 

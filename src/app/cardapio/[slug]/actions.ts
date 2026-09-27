@@ -6,11 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSession } from "@/lib/auth";
 import { isPaymentAccepted } from "@/lib/order";
 import { digitsOnly, formatBRL } from "@/lib/format";
-import {
-  eligibleHalves,
-  halvesRequirement,
-  lineUnitPriceCents,
-} from "@/lib/halves";
+import { lineUnitPriceCents } from "@/lib/pricing";
 import type { MenuItem } from "@/lib/catalog";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Database } from "@/lib/supabase/database.types";
@@ -25,14 +21,13 @@ export type OrderState = {
 export type CartLine = {
   productId: number;
   quantity: number;
+  /**
+   * Ids dos valores de opção escolhidos, incluindo os sabores. No modelo por
+   * tamanho o sabor é uma opção comum (do grupo `is_flavor_group`), então não
+   * existe campo separado de "metades" — tudo vem aqui.
+   */
   optionValueIds: number[];
   notes: string;
-  /**
-   * Ids dos produtos que formam as metades, na ordem escolhida. Só é usado
-   * quando algum valor escolhido tem `halves_count > 0` — "2 Sabores" traz
-   * dois ids aqui, "1 Sabor" traz `[]`.
-   */
-  halves: number[];
 };
 
 const MAX_LINES = 40;
@@ -54,9 +49,9 @@ function orderCode(): string {
 
 /**
  * Desfaz o pedido inteiro quando uma etapa depois da criação falha.
- * `order_items`, `order_item_options` e `order_item_halves` caem por cascade,
- * então um DELETE no pedido limpa tudo. Sem isso o cliente receberia um código
- * que aponta para um registro pela metade.
+ * `order_items` e `order_item_options` caem por cascade, então um DELETE no
+ * pedido limpa tudo. Sem isso o cliente receberia um código que aponta para um
+ * registro pela metade.
  */
 async function discardOrder(admin: SupabaseClient<Database>, orderId: number) {
   await admin.from("orders").delete().eq("id", orderId);
@@ -67,10 +62,6 @@ const lineSchema = z.object({
   quantity: z.number().int().min(1).max(MAX_QTY),
   optionValueIds: z.array(z.number().int().positive()).max(20).default([]),
   notes: z.string().max(200).default(""),
-  // Até 3 porque `halves_count` tem check `between 0 and 3` no banco. Um array
-  // maior é lixo que o navegador mandou, e a validação por linha abaixo recusa
-  // com mensagem de sabor faltando em vez de cortar em silêncio.
-  halves: z.array(z.number().int().positive()).max(3).default([]),
 });
 
 const orderSchema = z.object({
@@ -214,7 +205,6 @@ export async function placeOrder(
     quantity: number;
     notes: string;
     options: { group: string; name: string; delta: number }[];
-    halves: { id: number; name: string; priceCents: number }[];
   }[] = [];
 
   for (const line of input.lines) {
@@ -289,9 +279,11 @@ export async function placeOrder(
 
     const options = chosen.map((valueId) => allowed.get(valueId)!);
 
-    // `chosen` é uma lista plana; a regra de meio a meio e o cálculo de preço
-    // trabalham com o formato `groupId -> valueIds`, que é como a vitrine
-    // guarda. Montar uma vez evita dois `Object.fromEntries` na mesma volta.
+    // `chosen` é uma lista plana; o cálculo de preço trabalha com o formato
+    // `groupId -> valueIds`, que é como a vitrine guarda. Os sabores são um
+    // grupo de opção comum (`is_flavor_group`), então já estão em `chosen` e a
+    // validação de mínimo/máximo por grupo acima já cobre "escolha de 1 a N
+    // sabores". Não há campo separado de metades.
     const selection = Object.fromEntries(
       product.option_groups.map((g) => [
         g.id,
@@ -299,67 +291,15 @@ export async function placeOrder(
       ]),
     );
 
-    /* --- meio a meio --- */
-
-    // Mesmas regras que a vitrine aplica, refeitas aqui porque o cliente pode
-    // ter alterado o payload. Sem esta checagem, um `halves: []` num item que
-    // exige 2 sabores entraria no banco como pizza inteira — o cliente pagaria
-    // R$ 45 e a cozinha receberia "1× Pizza Margherita" sem nenhuma metade.
-    const exigido = halvesRequirement(product, selection);
-    const metades = [...new Set(line.halves)];
-
-    if (exigido > 0) {
-      if (metades.length !== exigido) {
-        return {
-          code: null,
-          error: `Escolha ${exigido} sabor${exigido > 1 ? "es" : ""} em ${product.name}.`,
-          fieldErrors: {},
-        };
-      }
-      const validas = new Set(
-        eligibleHalves(product, menuItems).map((other) => other.id),
-      );
-      for (const id of metades) {
-        if (!validas.has(id)) {
-          return {
-            code: null,
-            error: `O sabor escolhido para ${product.name} não está mais disponível.`,
-            fieldErrors: {},
-          };
-        }
-      }
-    } else if (metades.length > 0) {
-      // Metade sem "2 Sabores" escolhido é estado impossível na vitrine. Chegar
-      // aqui significa payload adulterado, e aceitar cobraria o sabor mais caro
-      // de um item que ninguém pediu.
-      return {
-        code: null,
-        error: `${product.name} não tem escolha de sabor.`,
-        fieldErrors: {},
-      };
-    }
-
     items.push({
       productId: product.id,
       productName: product.name,
-      // Preço vem do banco. O delta também — o cliente nunca manda valor.
-      unitPriceCents: lineUnitPriceCents(
-        product,
-        selection,
-        exigido > 0 ? metades : [],
-        catalog,
-      ),
+      // Preço vem do banco: o sabor mais caro entre os escolhidos + acréscimos.
+      // O cliente nunca manda valor.
+      unitPriceCents: lineUnitPriceCents(product, selection),
       quantity: line.quantity,
       notes: line.notes,
       options,
-      halves:
-        exigido > 0
-          ? metades.map((id) => ({
-              id,
-              name: catalog.get(id)!.name,
-              priceCents: catalog.get(id)!.price_cents,
-            }))
-          : [],
     });
   }
 
@@ -476,37 +416,6 @@ export async function placeOrder(
     // escolhas dele sumiram — "sem cebola" que ele marcou chegaria na mesa
     // como "sem cebola" ausente. O pedido volta inteiro, então desfazemos.
     if (optionsError) {
-      await discardOrder(admin, order!.id);
-      return {
-        code: null,
-        error: "Não conseguimos registrar seu pedido. Tente de novo em instantes.",
-        fieldErrors: {},
-      };
-    }
-  }
-
-  // As metades entram pelo mesmo caminho das opções: snapshot do que foi
-  // pedido, gravado junto com o item. `position` preserva a ordem escolhida
-  // porque a 1ª metade é a esquerda e a 2ª a direita — invertido, o cliente
-  // recebe metade a mais de um sabor e a menos de outro.
-  const halfRows = items.flatMap((item, index) =>
-    item.halves.map((half, position) => ({
-      order_item_id: savedItems[index].id,
-      product_id: half.id,
-      product_name: half.name,
-      price_cents: half.priceCents,
-      position,
-    })),
-  );
-
-  if (halfRows.length > 0) {
-    const { error: halvesError } = await admin
-      .from("order_item_halves")
-      .insert(halfRows);
-    // Mesmo motivo da checagem das opções: um pedido sem as metades registradas
-    // é pior que nenhum pedido, porque a cozinha não tem como saber que a pizza
-    // era meio a meio.
-    if (halvesError) {
       await discardOrder(admin, order!.id);
       return {
         code: null,
