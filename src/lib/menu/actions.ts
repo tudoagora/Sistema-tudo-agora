@@ -45,6 +45,19 @@ function int(formData: FormData, key: string, fallback = 0): number {
 
 const toCents = (reais: number) => Math.max(0, Math.round(reais * 100));
 
+/**
+ * Próximo `sort_order` livre de uma lista.
+ *
+ * Não serve `lista.length + 1`: isso é a **contagem**, não o maior número. Depois
+ * de excluir um item do meio, a contagem volta e o próximo nasce com um
+ * `sort_order` que outro item já usa. O editor desempata por nome, então a
+ * empatecia aparece como "a seta não funciona": `moveOptionGroup` trocava dois
+ * `sort_order` iguais e nenhuma linha mudava de lugar.
+ */
+function nextSortOrder(sortOrders: number[]): number {
+  return sortOrders.length === 0 ? 1 : Math.max(...sortOrders) + 1;
+}
+
 function friendly(error: { code?: string; message: string }): string {
   if (error.code === "23505") return "Já existe um item com esse nome.";
   if (error.code === "23503") return "Este registro não existe mais.";
@@ -142,7 +155,7 @@ export async function createMenuSection(
   const { name } = parsed.data;
   const { data: existing } = await supabase
     .from("menu_categories")
-    .select("id")
+    .select("sort_order")
     .eq("business_id", businessId);
 
   const { error } = await supabase.from("menu_categories").insert({
@@ -150,7 +163,7 @@ export async function createMenuSection(
     name,
     description: parsed.data.description || null,
     slug: await uniqueSectionSlug(supabase, businessId, name),
-    sort_order: (existing?.length ?? 0) + 1,
+    sort_order: nextSortOrder((existing ?? []).map((row) => row.sort_order)),
   });
 
   if (error) return { error: friendly(error) };
@@ -509,7 +522,7 @@ export async function createOptionGroup(
 
   const { data: existing } = await supabase
     .from("option_groups")
-    .select("id")
+    .select("sort_order")
     .eq("business_id", businessId);
 
   const { error } = await supabase.from("option_groups").insert({
@@ -518,7 +531,7 @@ export async function createOptionGroup(
     min_select: data.minSelect,
     max_select: data.maxSelect,
     is_required: data.isRequired,
-    sort_order: (existing?.length ?? 0) + 1,
+    sort_order: nextSortOrder((existing ?? []).map((row) => row.sort_order)),
   });
 
   if (error) return { error: friendly(error) };
@@ -583,7 +596,7 @@ export async function createOptionValue(
 
   const { data: existing } = await supabase
     .from("option_values")
-    .select("id")
+    .select("sort_order")
     .eq("option_group_id", optionGroupId);
 
   const { error } = await supabase.from("option_values").insert({
@@ -594,7 +607,7 @@ export async function createOptionValue(
     // "2 Sabores" = 2. A regra de preço (paga o mais caro) mora na vitrine e
     // no `placeOrder`; aqui só diz quantas metades este valor exige.
     halves_count: parsed.data.halves,
-    sort_order: (existing?.length ?? 0) + 1,
+    sort_order: nextSortOrder((existing ?? []).map((row) => row.sort_order)),
   });
 
   if (error) return { error: friendly(error) };
@@ -630,52 +643,110 @@ export async function deleteOptionValue(formData: FormData) {
 }
 
 /**
- * Troca a ordem de dois valores dentro do mesmo grupo.
+ * Grava a ordem vinda do editor, um `sort_order` por posição (1..N).
  *
- * `option_values` não tem `business_id` — a empresa vem do grupo, então a
- * permissão é conferida(andando a cadeia) em vez de lida de uma coluna.
+ * Substitui a troca entre dois vizinhos porque essa troca depende de os dois
+ * `sort_order` serem diferentes. Havia empate no dado legado (criado antes de
+ * `nextSortOrder` existir) e o editor desempata por nome: a troca escrevia o
+ * mesmo número nas duas linhas e a seta parecia quebrada. Reatribuir a lista
+ * inteira também normaliza o dado legado na primeira movimentação.
+ *
+ * A lista vem inteira do editor, então a checagem é "todo id pertence a esta
+ * empresa" — nunca "o cliente pediu exatamente este par".
  */
-export async function moveOptionValue(formData: FormData) {
-  const id = int(formData, "id");
+async function applyOrder(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  scope: { businessId: number } | { optionGroupId: number },
+  ids: number[],
+  formData: FormData,
+): Promise<void> {
+  if (ids.length === 0) return;
+
+  // `option_values` não tem `business_id`: a empresa vem do grupo, e é por
+  // isso que os dois ramos não podem compartilhar o mesmo `.from()`.
+  const owned =
+    "businessId" in scope
+      ? (
+          await supabase
+            .from("option_groups")
+            .select("id")
+            .eq("business_id", scope.businessId)
+        ).data
+      : (
+          await supabase
+            .from("option_values")
+            .select("id")
+            .eq("option_group_id", scope.optionGroupId)
+        ).data;
+
+  const permitted = new Set((owned ?? []).map((row) => row.id));
+  if (ids.length !== permitted.size || ids.some((id) => !permitted.has(id))) {
+    fail(formData, NO_PERMISSION);
+    return;
+  }
+
+  // Um update por posição, todos em paralelo. `upsert` resolveria numa
+  // requisição só, mas o tipo de inserção exige `name` e a coluna de dono, e
+  // mandar dado que não mudou seria confiar no adiamento do NOT NULL do
+  // Postgres — não vale a aposta por uma lista de meia dúzia.
+  const writes = ids.map((id, index) => ({ id, sort_order: index + 1 }));
+  const results = await Promise.all(
+    writes.map(({ id, sort_order }) =>
+      "businessId" in scope
+        ? supabase.from("option_groups").update({ sort_order }).eq("id", id)
+        : supabase.from("option_values").update({ sort_order }).eq("id", id),
+    ),
+  );
+  const failed = results.find((result) => result.error);
+  if (failed?.error) fail(formData, friendly(failed.error));
+}
+
+/** Lê `ids` do form: lista de ids na nova ordem, separada por vírgula. */
+function orderFromForm(formData: FormData): number[] {
+  return text(formData, "ids")
+    .split(",")
+    .map((part) => Number(part.trim()))
+    .filter((value) => Number.isInteger(value) && value > 0);
+}
+
+/**
+ * Reordena os grupos de opção — é a ordem em que o cliente responde "Tamanho,
+ * Borda, Molho, Extras" no pedido.
+ */
+export async function reorderOptionGroups(formData: FormData) {
   const businessId = int(formData, "businessId");
-  const direction = text(formData, "direction");
   const supabase = await clientFor(businessId);
   if (!supabase) return fail(formData, NO_PERMISSION);
 
-  const { data: value } = await supabase
-    .from("option_values")
-    .select("id, option_group_id")
-    .eq("id", id)
-    .maybeSingle();
-  if (!value) return;
+  const ids = orderFromForm(formData);
+  if (ids.length === 0) return;
+  await applyOrder(supabase, { businessId }, ids, formData);
+  revalidateMenu(businessId);
+}
+
+/**
+ * Reordena as opções de um grupo.
+ *
+ * `option_values` não tem `business_id` — a empresa vem do grupo, então a
+ * permissão é conferida (andando a cadeia) em vez de lida de uma coluna.
+ */
+export async function reorderOptionValues(formData: FormData) {
+  const businessId = int(formData, "businessId");
+  const optionGroupId = int(formData, "optionGroupId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return fail(formData, NO_PERMISSION);
+  if (!Number.isInteger(optionGroupId)) return fail(formData, "Grupo inválido.");
 
   const { data: group } = await supabase
     .from("option_groups")
     .select("id, business_id")
-    .eq("id", value.option_group_id)
+    .eq("id", optionGroupId)
     .maybeSingle();
-  if (group?.business_id !== businessId) return;
+  if (group?.business_id !== businessId) return fail(formData, NO_PERMISSION);
 
-  const { data } = await supabase
-    .from("option_values")
-    .select("id, sort_order")
-    .eq("option_group_id", value.option_group_id)
-    .order("sort_order", { ascending: true });
-  const rows = data ?? [];
-
-  const index = rows.findIndex((row) => row.id === id);
-  const target = direction === "up" ? index - 1 : index + 1;
-  if (index < 0 || target < 0 || target >= rows.length) return;
-
-  await supabase
-    .from("option_values")
-    .update({ sort_order: rows[target].sort_order })
-    .eq("id", rows[index].id);
-  await supabase
-    .from("option_values")
-    .update({ sort_order: rows[index].sort_order })
-    .eq("id", rows[target].id);
-
+  const ids = orderFromForm(formData);
+  if (ids.length === 0) return;
+  await applyOrder(supabase, { optionGroupId }, ids, formData);
   revalidateMenu(businessId);
 }
 
@@ -692,38 +763,10 @@ export async function deleteOptionGroup(formData: FormData) {
 }
 
 /**
- * Troca a ordem dos grupos — é a ordem em que o cliente responde "Tamanho,
- * Borda, Molho, Extras" no pedido.
+ * Reordena os grupos de opção — é a ordem em que o cliente responde "Tamanho,
+ * Borda, Molho, Extras" no pedido. Substitui `moveOptionGroup`, que trocava dois
+ * `sort_order` vizinhos e não se mexia quando eles eram iguais.
  */
-export async function moveOptionGroup(formData: FormData) {
-  const id = int(formData, "id");
-  const businessId = int(formData, "businessId");
-  const direction = text(formData, "direction");
-  const supabase = await clientFor(businessId);
-  if (!supabase) return fail(formData, NO_PERMISSION);
-
-  const { data } = await supabase
-    .from("option_groups")
-    .select("id, sort_order")
-    .eq("business_id", businessId)
-    .order("sort_order");
-  const rows = data ?? [];
-
-  const index = rows.findIndex((row) => row.id === id);
-  const target = direction === "up" ? index - 1 : index + 1;
-  if (index < 0 || target < 0 || target >= rows.length) return;
-
-  await supabase
-    .from("option_groups")
-    .update({ sort_order: rows[target].sort_order })
-    .eq("id", rows[index].id);
-  await supabase
-    .from("option_groups")
-    .update({ sort_order: rows[index].sort_order })
-    .eq("id", rows[target].id);
-
-  revalidateMenu(businessId);
-}
 
 export async function linkProductToOptionGroup(formData: FormData) {
   const businessId = int(formData, "businessId");

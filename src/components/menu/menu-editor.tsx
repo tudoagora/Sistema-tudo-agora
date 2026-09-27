@@ -1,6 +1,23 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { useActionState, useState, type ReactNode } from "react";
 
 import { ImageField } from "@/components/menu/image-field";
 import { formatBRL } from "@/lib/format";
@@ -15,9 +32,9 @@ import {
   deleteProduct,
   linkProductToOptionGroup,
   moveMenuSection,
-  moveOptionGroup,
-  moveOptionValue,
   moveProduct,
+  reorderOptionGroups,
+  reorderOptionValues,
   toggleMenuSection,
   toggleOptionValue,
   toggleProductAvailability,
@@ -146,45 +163,101 @@ function ArrowButton({
 }
 
 /**
- * Mesma coisa que `ArrowButton`, porém do tamanho de uma pílula.
+ * Seta de reordenação do tamanho de uma pílula.
  *
- * As opções de um grupo ficam em pílulas na mesma linha; um botão de 36px
- * destoaria e empurraria o texto. Aqui as setas são texto puro, do tamanho do
- * próprio nome da opção.
- *
- * Não manda `optionGroupId`: `moveOptionValue` descobre o grupo pela própria
- * linha do valor, e é essa linha que a policy `option_values_manage` confere.
+ * Não é `<form action>`: a reordenação agora grava a lista inteira de uma vez
+ * (ver `reorderOptionValues`), então quem chama precisa da posição de origem e
+ * de destino, e não de um par de ids com direção.
  */
 function MiniArrowButton({
-  action,
-  id,
-  businessId,
-  direction,
+  onClick,
+  disabled,
   title,
   glyph,
 }: {
-  action: FormAction;
-  id: number;
-  businessId: number;
-  direction: "up" | "down";
+  onClick: () => void;
+  disabled: boolean;
   title: string;
   glyph: string;
 }) {
   return (
-    <form action={action} className="contents">
-      <input type="hidden" name="id" value={id} />
-      <input type="hidden" name="businessId" value={businessId} />
-      <input type="hidden" name="direction" value={direction} />
-      <button
-        type="submit"
-        title={title}
-        aria-label={title}
-        className="px-0.5 text-xs leading-none text-texto-tenue transition-colors hover:text-marca-800"
-      >
-        <span aria-hidden="true">{glyph}</span>
-      </button>
-    </form>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      aria-label={title}
+      className="px-0.5 text-xs leading-none text-texto-tenue transition-colors hover:text-marca-800 disabled:invisible"
+    >
+      <span aria-hidden="true">{glyph}</span>
+    </button>
   );
+}
+
+/**
+ * Linha reordenável por arrasto (ou pelo teclado, com as setas do dnd-kit).
+ *
+ * Só a alça recebe os listeners. O card inteiro tem botão de abrir/fechar,
+ * botão de excluir e campos de edição: arrastar em qualquer ponto arrastaria
+ * junto com a seleção de texto e o clique abriria o item por acidente.
+ */
+function SortableItem({
+  id,
+  children,
+}: {
+  id: number;
+  children: ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id });
+
+  return (
+    <li
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.4 : 1,
+        // Sem isto o card arrastado passa por baixo dos irmãos e some no meio da
+        // pilha, porque os vizinhos criam contexto de empilhamento próprio.
+        zIndex: isDragging ? 20 : "auto",
+        position: "relative",
+      }}
+      className={isDragging ? "shadow-lg" : undefined}
+    >
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        title="Arrastar para reordenar"
+        aria-label={`Reordenar. Use as setas do teclado ou arraste.`}
+        className="absolute left-1.5 top-1/2 -translate-y-1/2 cursor-grab touch-none rounded p-1 text-texto-tenue transition-colors hover:text-marca-800 focus-visible:border focus-visible:border-marca-600 active:cursor-grabbing"
+      >
+        <span aria-hidden="true" className="block text-base leading-none">
+          ⠿
+        </span>
+      </button>
+      {children}
+    </li>
+  );
+}
+
+/**
+ * Aplica a ordem otimista por cima da ordem do banco.
+ *
+ * Ignora ids que a lista base não tem: durante o arrasto o `revalidate` pode
+ * devolver um grupo já apagado, e um id órfão no `SortableContext` faz o dnd-kit
+ * lançar.
+ */
+function reorder<T extends { id: number }>(list: T[], order: number[] | null): T[] {
+  if (!order) return list;
+  const byId = new Map(list.map((item) => [item.id, item]));
+  const next = order.flatMap((id) => {
+    const item = byId.get(id);
+    return item ? [item] : [];
+  });
+  const placed = new Set(next.map((item) => item.id));
+  return [...next, ...list.filter((item) => !placed.has(item.id))];
 }
 
 export function MenuEditor({
@@ -208,6 +281,17 @@ export function MenuEditor({
 }) {
   const [openSection, setOpenSection] = useState<number | null>(sections[0]?.id ?? null);
   const [openGroup, setOpenGroup] = useState<number | null>(groups[0]?.id ?? null);
+  /**
+   * Ordem otimista, por lista de ids. O dado vem do servidor e chega em
+   * `sort_order`; o `revalidate` da action reenvia a página, mas esperar isso
+   * para mover a lista deixa o arrasto sem resposta nenhuma.
+   *
+   * É uma *sobreposição*, não a fonte: enquanto a página não recarrega, esta
+   * lista é a ordem real; se a action recusar, `revalidate` traz a ordem do
+   * banco de volta e o `useState` oldsmoa o estado.
+   */
+  const [groupOrder, setGroupOrder] = useState<number[] | null>(null);
+  const [valueOrder, setValueOrder] = useState<Record<number, number[]>>({});
   const [sectionState, sectionAction, sectionPending] =
     useActionState(createMenuSection, emptyMenuState);
   const [productState, productAction, productPending] = useActionState(
@@ -223,12 +307,67 @@ export function MenuEditor({
     emptyMenuState,
   );
 
-  // A ordem das setas ↑ ↓ é a ordem que o cliente vai ver: `sort_order` no
-  // banco, desempate pelo nome para não ficar instável entre dois itens que
-  // nunca foram movidos.
-  const sortedGroups = [...groups].sort(
-    (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, "pt-BR"),
+  // `distance: 4` deixa o toque na alça ser toque, e o arrasto só começar depois
+  // de um movimento mínimo. Sem isso, o toque numa tela de celular trava a
+  // página numa tentativa de arrasto que o usuário nem sabe que começou.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
+
+  /**
+   * Grava a nova ordem.
+   *
+   * O estado local (`order`/`groupOrder`) é atualizado na hora para a lista
+   * não piscar enquanto o form viaja; a resposta do servidor é o `revalidate`
+   * que reconfirma. Se a action recusar, o editor volta ao que o banco tem.
+   */
+  function commitOrder(formId: string, ids: number[], owner?: number) {
+    const form = document.getElementById(formId);
+    if (!(form instanceof HTMLFormElement)) return;
+    const fields = form.elements;
+    const idsField = fields.namedItem("ids");
+    if (idsField instanceof HTMLInputElement) idsField.value = ids.join(",");
+    const ownerField = fields.namedItem("optionGroupId");
+    if (owner !== undefined && ownerField instanceof HTMLInputElement) {
+      ownerField.value = String(owner);
+    }
+    form.requestSubmit();
+  }
+
+  function moveGroupTo(from: number, to: number) {
+    if (to < 0 || to >= sortedGroups.length || from === to) return;
+    const next = arrayMove(sortedGroups, from, to);
+    setGroupOrder(next.map((group) => group.id));
+    commitOrder("form-reorder-grupos", next.map((group) => group.id));
+  }
+
+  function onGroupsDragEnd(event: DragEndEvent) {
+    const from = sortedGroups.findIndex((group) => group.id === event.active.id);
+    const to = sortedGroups.findIndex((group) => group.id === event.over?.id);
+    moveGroupTo(from, to);
+  }
+
+  function moveValueTo(groupId: number, list: MenuValue[], from: number, to: number) {
+    if (to < 0 || to >= list.length || from === to) return;
+    const next = arrayMove(list, from, to);
+    setValueOrder((current) => ({ ...current, [groupId]: next.map((v) => v.id) }));
+    commitOrder("form-reorder-valores", next.map((v) => v.id), groupId);
+  }
+
+  /**
+   * A ordem das setas ↑ ↓ é a ordem que o cliente vai ver: `sort_order` no
+   * banco, desempate pelo nome para não ficar instável entre dois itens que
+   * nunca foram movidos. Um item já arrastado obedece `groupOrder`/`valueOrder`.
+   */
+  const bySortOrder = <T extends { id: number; sort_order: number; name: string }>(
+    list: T[],
+  ) =>
+    [...list].sort(
+      (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, "pt-BR"),
+    );
+
+  const sortedGroups = reorder(bySortOrder(groups), groupOrder);
 
   const valuesByGroup = new Map<number, MenuValue[]>();
   for (const value of values) {
@@ -236,8 +375,8 @@ export function MenuEditor({
     list.push(value);
     valuesByGroup.set(value.option_group_id, list);
   }
-  for (const list of valuesByGroup.values()) {
-    list.sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, "pt-BR"));
+  for (const [groupId, list] of valuesByGroup) {
+    valuesByGroup.set(groupId, reorder(bySortOrder(list), valueOrder[groupId]));
   }
 
   const linksByProduct = new Map<number, number[]>();
@@ -266,6 +405,23 @@ export function MenuEditor({
 
   return (
     <div className="mt-10 space-y-12">
+      {/*
+        Alvos das duas reordenações. Um form só, com o campo `optionGroupId`
+        preenchido no momento do envio: a action valida a propriedade de cada id
+        pelo próprio grupo, então não há como o editor escrever valor de outra
+        empresa.
+      */}
+      <form id="form-reorder-grupos" action={reorderOptionGroups} hidden>
+        <BackTo backTo={backTo} />
+        <input type="hidden" name="businessId" value={businessId} />
+        <input type="hidden" name="ids" defaultValue="" />
+      </form>
+      <form id="form-reorder-valores" action={reorderOptionValues} hidden>
+        <BackTo backTo={backTo} />
+        <input type="hidden" name="businessId" value={businessId} />
+        <input type="hidden" name="optionGroupId" defaultValue="" />
+        <input type="hidden" name="ids" defaultValue="" />
+      </form>
       <section aria-labelledby="secoes">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -476,27 +632,54 @@ export function MenuEditor({
             itens oferecerem variações.
           </p>
         ) : (
-          <ul className="mt-5 space-y-3">
-            {sortedGroups.map((group, position) => (
-              <OptionGroupCard
-                key={group.id}
-                businessId={businessId}
-                backTo={backTo}
-                group={group}
-                groupValues={valuesByGroup.get(group.id) ?? []}
-                usedByCount={(productsByGroup.get(group.id) ?? []).length}
-                isFirst={position === 0}
-                isLast={position === sortedGroups.length - 1}
-                open={openGroup === group.id}
-                onToggle={() =>
-                  setOpenGroup((current) => (current === group.id ? null : group.id))
-                }
-                valueState={valueState}
-                valueAction={valueAction}
-                valuePending={valuePending}
-              />
-            ))}
-          </ul>
+          <DndContext
+            // `id` fixo: sem ele o dnd-kit gera `DndDescribedBy-N` a partir de
+            // um contador de módulo, e como há um `DndContext` aninhado por
+            // grupo aberto, servidor e cliente instanciam em ordens diferentes
+            // e o React acusa hydration mismatch no `aria-describedby`.
+            id="grupos-de-opcao"
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={onGroupsDragEnd}
+          >
+            <SortableContext
+              items={sortedGroups.map((group) => group.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <ul className="mt-5 space-y-3">
+                {sortedGroups.map((group, position) => (
+                  <SortableItem key={group.id} id={group.id}>
+                    <OptionGroupCard
+                      businessId={businessId}
+                      backTo={backTo}
+                      group={group}
+                      groupValues={valuesByGroup.get(group.id) ?? []}
+                      usedByCount={(productsByGroup.get(group.id) ?? []).length}
+                      isFirst={position === 0}
+                      isLast={position === sortedGroups.length - 1}
+                      onMove={(direction) => moveGroupTo(position, position + direction)}
+                      open={openGroup === group.id}
+                      onToggle={() =>
+                        setOpenGroup((current) => (current === group.id ? null : group.id))
+                      }
+                      onValuesDragEnd={(from, to) =>
+                        moveValueTo(
+                          group.id,
+                          valuesByGroup.get(group.id) ?? [],
+                          from,
+                          to,
+                        )
+                      }
+                      sensors={sensors}
+                      valueState={valueState}
+                      valueAction={valueAction}
+                      valuePending={valuePending}
+                    />
+                  </SortableItem>
+                ))}
+              </ul>
+            </SortableContext>
+          </DndContext>
         )}
 
         <form
@@ -1089,8 +1272,11 @@ function OptionGroupCard({
   usedByCount,
   isFirst,
   isLast,
+  onMove,
+  onValuesDragEnd,
   open,
   onToggle,
+  sensors,
   valueState,
   valueAction,
   valuePending,
@@ -1103,8 +1289,12 @@ function OptionGroupCard({
   usedByCount: number;
   isFirst: boolean;
   isLast: boolean;
+  /** `-1` sobe, `+1` desce. Reordena por posição, não trocando `sort_order`. */
+  onMove: (direction: -1 | 1) => void;
+  onValuesDragEnd: (from: number, to: number) => void;
   open: boolean;
   onToggle: () => void;
+  sensors: ReturnType<typeof useSensors>;
   valueState: { error: string | null };
   valueAction: (formData: FormData) => void;
   valuePending: boolean;
@@ -1113,8 +1303,8 @@ function OptionGroupCard({
   const available = groupValues.filter((value) => value.is_available).length;
 
   return (
-    <li className="overflow-hidden rounded-card border border-borda bg-white">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-borda bg-superficie px-5 py-3">
+    <div className="overflow-hidden rounded-card border border-borda bg-white pl-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-borda bg-superficie py-3 pl-3 pr-5">
         <button
           type="button"
           onClick={onToggle}
@@ -1145,24 +1335,26 @@ function OptionGroupCard({
 
         <div className="flex flex-wrap items-center gap-1.5">
           {!isFirst ? (
-            <ArrowButton
-              action={moveOptionGroup}
-              id={group.id}
-              businessId={businessId}
-              direction="up"
+            <button
+              type="button"
+              onClick={() => onMove(-1)}
               title={`Subir ${group.name}`}
-              glyph="↑"
-            />
+              aria-label={`Subir ${group.name}`}
+              className="min-h-9 min-w-9 rounded-logo border border-borda-forte text-sm transition-colors hover:border-marca-600 hover:text-marca-800"
+            >
+              <span aria-hidden="true">↑</span>
+            </button>
           ) : null}
           {!isLast ? (
-            <ArrowButton
-              action={moveOptionGroup}
-              id={group.id}
-              businessId={businessId}
-              direction="down"
+            <button
+              type="button"
+              onClick={() => onMove(1)}
               title={`Descer ${group.name}`}
-              glyph="↓"
-            />
+              aria-label={`Descer ${group.name}`}
+              className="min-h-9 min-w-9 rounded-logo border border-borda-forte text-sm transition-colors hover:border-marca-600 hover:text-marca-800"
+            >
+              <span aria-hidden="true">↓</span>
+            </button>
           ) : null}
         </div>
       </div>
@@ -1202,89 +1394,99 @@ function OptionGroupCard({
             </p>
           ) : (
             <>
-              <ul className="mt-3 flex flex-wrap gap-2">
-                {groupValues.map((value, index) => (
-                  <li
-                    key={value.id}
-                    className={`flex items-center gap-1 rounded-pill border px-3 py-1 text-xs font-semibold ${
-                      value.is_available
-                        ? "border-borda-forte text-texto-forte"
-                        : "border-erro/40 bg-erro/5 text-texto-tenue line-through"
-                    }`}
-                  >
-                    {value.name}
-                    {value.price_delta_cents ? (
-                      <span className="ml-1 text-marca-600">
-                        {value.price_delta_cents > 0 ? "+" : ""}
-                        {formatBRL(value.price_delta_cents)}
-                      </span>
-                    ) : null}
-                    {value.halves_count > 0 ? (
-                      // Sem este badge o lojista não tem como conferir, depois
-                      // de fechar o editor, que "2 Sabores" está de fato pedindo
-                      // duas metades. E o efeito é silencioso: o grupo aparece
-                      // configurado, o cliente vê o seletor, e a cozinha recebe
-                      // a pizza errada se alguma coisa do meio do caminho cair.
-                      <span
-                        className="ml-1 rounded-pill bg-marca-100 px-1.5 py-0.5 text-[10px] font-bold text-marca-800"
-                        title="Meio a meio: quando o cliente escolhe esta opção, precisa escolher os sabores de cada metade"
-                      >
-                        {value.halves_count}×
-                      </span>
-                    ) : null}
-                    {index > 0 ? (
-                      <MiniArrowButton
-                        action={moveOptionValue}
-                        id={value.id}
-                        businessId={businessId}
-                        direction="up"
-                        title={`Subir ${value.name}`}
-                        glyph="↑"
-                      />
-                    ) : null}
-                    {index < groupValues.length - 1 ? (
-                      <MiniArrowButton
-                        action={moveOptionValue}
-                        id={value.id}
-                        businessId={businessId}
-                        direction="down"
-                        title={`Descer ${value.name}`}
-                        glyph="↓"
-                      />
-                    ) : null}
-                    <ToggleButton
-                      action={toggleOptionValue}
-                      id={value.id}
-                      businessId={businessId}
-                      value={!value.is_available}
-                      active={!value.is_available}
-                      title={
-                        value.is_available
-                          ? `Pausar ${value.name}`
-                          : `Reativar ${value.name}`
-                      }
-                      activeClass="border-erro bg-erro/10 text-erro-700"
-                    >
-                      {value.is_available ? "⏸" : "▶"}
-                    </ToggleButton>
-                    <form action={deleteOptionValue} className="contents">
-                      <BackTo backTo={backTo} />
-                      <input type="hidden" name="id" value={value.id} />
-                      <input type="hidden" name="businessId" value={businessId} />
-                      <button
-                        type="submit"
-                        title={`Excluir ${value.name}`}
-                        aria-label={`Excluir ${value.name}`}
-                        className="text-texto-tenue hover:text-erro-700"
-                      >
-                        ×
-                      </button>
-                    </form>
-                  </li>
-                ))}
-              </ul>
+              <DndContext
+                id={`valores-do-grupo-${group.id}`}
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={(event) => {
+                  const from = groupValues.findIndex((v) => v.id === event.active.id);
+                  const to = groupValues.findIndex((v) => v.id === event.over?.id);
+                  onValuesDragEnd(from, to);
+                }}
+              >
+                <SortableContext
+                  items={groupValues.map((value) => value.id)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <ul className="mt-3 space-y-1.5">
+                    {groupValues.map((value, index) => (
+                      <SortableItem key={value.id} id={value.id}>
+                        <div
+                          className={`flex items-center gap-1.5 rounded-pill border py-1 pl-6 pr-3 text-xs font-semibold ${
+                            value.is_available
+                              ? "border-borda-forte text-texto-forte"
+                              : "border-erro/40 bg-erro/5 text-texto-tenue line-through"
+                          }`}
+                        >
+                          {value.name}
+                          {value.price_delta_cents ? (
+                            <span className="ml-1 text-marca-600">
+                              {value.price_delta_cents > 0 ? "+" : ""}
+                              {formatBRL(value.price_delta_cents)}
+                            </span>
+                          ) : null}
+                          {value.halves_count > 0 ? (
+                            // Sem este badge o lojista não tem como conferir, depois
+                            // de fechar o editor, que "2 Sabores" está de fato pedindo
+                            // duas metades. E o efeito é silencioso: o grupo aparece
+                            // configurado, o cliente vê o seletor, e a cozinha recebe
+                            // a pizza errada se alguma coisa do meio do caminho cair.
+                            <span
+                              className="ml-1 rounded-pill bg-marca-100 px-1.5 py-0.5 text-[10px] font-bold text-marca-800"
+                              title="Meio a meio: quando o cliente escolhe esta opção, precisa escolher os sabores de cada metade"
+                            >
+                              {value.halves_count}×
+                            </span>
+                          ) : null}
+                          <MiniArrowButton
+                            onClick={() => onValuesDragEnd(index, index - 1)}
+                            disabled={index === 0}
+                            title={`Subir ${value.name}`}
+                            glyph="↑"
+                          />
+                          <MiniArrowButton
+                            onClick={() => onValuesDragEnd(index, index + 1)}
+                            disabled={index === groupValues.length - 1}
+                            title={`Descer ${value.name}`}
+                            glyph="↓"
+                          />
+                          <ToggleButton
+                            action={toggleOptionValue}
+                            id={value.id}
+                            businessId={businessId}
+                            value={!value.is_available}
+                            active={!value.is_available}
+                            title={
+                              value.is_available
+                                ? `Pausar ${value.name}`
+                                : `Reativar ${value.name}`
+                            }
+                            activeClass="border-erro bg-erro/10 text-erro-700"
+                          >
+                            {value.is_available ? "⏸" : "▶"}
+                          </ToggleButton>
+                          <form action={deleteOptionValue} className="contents">
+                            <BackTo backTo={backTo} />
+                            <input type="hidden" name="id" value={value.id} />
+                            <input type="hidden" name="businessId" value={businessId} />
+                            <button
+                              type="submit"
+                              title={`Excluir ${value.name}`}
+                              aria-label={`Excluir ${value.name}`}
+                              className="text-texto-tenue hover:text-erro-700"
+                            >
+                              ×
+                            </button>
+                          </form>
+                        </div>
+                      </SortableItem>
+                    ))}
+                  </ul>
+                </SortableContext>
+              </DndContext>
               <p className="mt-2 text-xs text-texto-tenue">
-                As setas definem a ordem em que as opções aparecem para o cliente.
+                Arraste pela alça ou use as setas: é a ordem em que as opções
+                aparecem para o cliente.
               </p>
             </>
           )}
@@ -1420,6 +1622,6 @@ function OptionGroupCard({
           </form>
         </div>
       ) : null}
-    </li>
+    </div>
   );
 }
