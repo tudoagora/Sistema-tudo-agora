@@ -61,7 +61,6 @@ export default async function BusinessMenuPage({ params }: PageParams) {
 
       <MenuEditor
         businessId={businessId}
-        backTo={`/admin/empresas/${businessId}/cardapio`}
         previewHref={previewHref}
         {...data}
       />

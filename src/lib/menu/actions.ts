@@ -1,12 +1,13 @@
 "use server";
 
-import { redirect } from "next/navigation";
-import type { Route } from "next";
 import { z } from "zod";
 
 import { revalidateMenu } from "@/lib/menu/revalidate";
-import type { MenuState, UploadState } from "@/lib/menu/state";
-import { safeNext } from "@/lib/next-redirect";
+import type {
+  MenuActionResult,
+  MenuState,
+  UploadState,
+} from "@/lib/menu/state";
 import { slugify } from "@/lib/slug";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Database } from "@/lib/supabase/database.types";
@@ -91,19 +92,23 @@ async function clientFor(businessId: number) {
 }
 
 /**
- * Erro de uma action usada em `<form action={...}>` direto.
+ * Resultado de uma mutação do editor.
  *
- * Sem `useActionState` não existe estado para guardar a mensagem, e voltar
- * com `{ error: null }` engolia a falha em silêncio (o que o editor antigo
- * fazia). Redirecionar de volta com `?erro=` pelo menos mostra o motivo.
+ * Estas actions rodam em `<form action>` sem `useActionState`, então não há
+ * estado de formulário para guardar a mensagem. Em vez de redirecionar (o que
+ * rolava a página ao topo e fechava o painel de edição), elas DEVOLVEM o
+ * resultado; o cliente lê e mostra um toast no lugar, mantendo scroll e painel.
  */
-function fail(formData: FormData, message: string): never {
-  const back = safeNext(text(formData, "backTo"));
-  const sep = back.includes("?") ? "&" : "?";
-  // O cast é o mesmo padrão de `requireUser`/`safeNext`: a query é montada em
-  // tempo de execução, então o literal não é provável pelo compilador.
-  redirect(`${back}${sep}erro=${encodeURIComponent(message)}` as Route);
-}
+const failWith = (message: string): MenuActionResult => ({
+  error: message,
+  ok: null,
+});
+const okWith = (message: string): MenuActionResult => ({
+  error: null,
+  ok: message,
+});
+/** Operação que não fez nada (ex.: mover item já na borda) — sem toast. */
+const noop: MenuActionResult = { error: null, ok: null };
 
 /* ------------------------------------------------------------------ */
 /* Seções do cardápio                                                  */
@@ -175,10 +180,10 @@ export async function updateMenuSection(formData: FormData) {
   const id = int(formData, "id");
   const businessId = int(formData, "businessId");
   const supabase = await clientFor(businessId);
-  if (!supabase) return fail(formData, NO_PERMISSION);
+  if (!supabase) return failWith(NO_PERMISSION);
 
   const name = text(formData, "name");
-  if (!name) return fail(formData, "A seção precisa de um nome.");
+  if (!name) return failWith("A seção precisa de um nome.");
 
   const patch: MenuCategoryUpdate = {
     name,
@@ -191,9 +196,10 @@ export async function updateMenuSection(formData: FormData) {
     .from("menu_categories")
     .update(patch)
     .eq("id", id);
-  if (error) return fail(formData, friendly(error));
+  if (error) return failWith(friendly(error));
 
   revalidateMenu(businessId);
+  return okWith("Seção salva.");
 }
 
 /**
@@ -204,15 +210,20 @@ export async function toggleMenuSection(formData: FormData) {
   const id = int(formData, "id");
   const businessId = int(formData, "businessId");
   const supabase = await clientFor(businessId);
-  if (!supabase) return fail(formData, NO_PERMISSION);
+  if (!supabase) return failWith(NO_PERMISSION);
 
   const { error } = await supabase
     .from("menu_categories")
     .update({ is_active: formData.get("value") === "true" })
     .eq("id", id);
-  if (error) return fail(formData, friendly(error));
+  if (error) return failWith(friendly(error));
 
   revalidateMenu(businessId);
+  return okWith(
+    formData.get("value") === "true"
+      ? "Seção visível na vitrine."
+      : "Seção oculta da vitrine.",
+  );
 }
 
 /**
@@ -224,16 +235,17 @@ export async function toggleMenuSection(formData: FormData) {
 export async function reorderMenuSections(formData: FormData) {
   const businessId = int(formData, "businessId");
   const supabase = await clientFor(businessId);
-  if (!supabase) return fail(formData, NO_PERMISSION);
+  if (!supabase) return failWith(NO_PERMISSION);
 
-  await applyOrder(
+  const reorderError = await applyOrder(
     supabase,
     { table: "menu_categories" },
     businessId,
     orderFromForm(formData),
-    formData,
   );
+  if (reorderError) return reorderError;
   revalidateMenu(businessId);
+  return okWith("Ordem das seções salva.");
 }
 
 /**
@@ -245,12 +257,13 @@ export async function deleteMenuSection(formData: FormData) {
   const id = int(formData, "id");
   const businessId = int(formData, "businessId");
   const supabase = await clientFor(businessId);
-  if (!supabase) return fail(formData, NO_PERMISSION);
+  if (!supabase) return failWith(NO_PERMISSION);
 
   const { error } = await supabase.from("menu_categories").delete().eq("id", id);
-  if (error) return fail(formData, friendly(error));
+  if (error) return failWith(friendly(error));
 
   revalidateMenu(businessId);
+  return okWith("Seção excluída.");
 }
 
 /* ------------------------------------------------------------------ */
@@ -325,7 +338,7 @@ export async function updateProduct(formData: FormData) {
   const id = int(formData, "id");
   const businessId = int(formData, "businessId");
   const supabase = await clientFor(businessId);
-  if (!supabase) return fail(formData, NO_PERMISSION);
+  if (!supabase) return failWith(NO_PERMISSION);
 
   const parsed = productSchema.safeParse({
     name: formData.get("name"),
@@ -334,7 +347,7 @@ export async function updateProduct(formData: FormData) {
     compareAtReais: formData.get("compareAtReais") || 0,
   });
   if (!parsed.success) {
-    return fail(formData, parsed.error.issues[0]?.message ?? "Dados inválidos.");
+    return failWith(parsed.error.issues[0]?.message ?? "Dados inválidos.");
   }
 
   const patch: ProductUpdate = {
@@ -347,9 +360,10 @@ export async function updateProduct(formData: FormData) {
   };
 
   const { error } = await supabase.from("products").update(patch).eq("id", id);
-  if (error) return fail(formData, friendly(error));
+  if (error) return failWith(friendly(error));
 
   revalidateMenu(businessId);
+  return okWith("Item salvo.");
 }
 
 /** Pausar/voltar um item sem abrir a edição — o clique que o garçom precisa. */
@@ -357,42 +371,51 @@ export async function toggleProductAvailability(formData: FormData) {
   const id = int(formData, "id");
   const businessId = int(formData, "businessId");
   const supabase = await clientFor(businessId);
-  if (!supabase) return fail(formData, NO_PERMISSION);
+  if (!supabase) return failWith(NO_PERMISSION);
 
   const { error } = await supabase
     .from("products")
     .update({ is_available: formData.get("value") === "true" })
     .eq("id", id);
-  if (error) return fail(formData, friendly(error));
+  if (error) return failWith(friendly(error));
 
   revalidateMenu(businessId);
+  return okWith(
+    formData.get("value") === "true" ? "Item disponível." : "Item pausado.",
+  );
 }
 
 export async function toggleProductFeatured(formData: FormData) {
   const id = int(formData, "id");
   const businessId = int(formData, "businessId");
   const supabase = await clientFor(businessId);
-  if (!supabase) return fail(formData, NO_PERMISSION);
+  if (!supabase) return failWith(NO_PERMISSION);
 
   const { error } = await supabase
     .from("products")
     .update({ is_featured: formData.get("value") === "true" })
     .eq("id", id);
-  if (error) return fail(formData, friendly(error));
+  if (error) return failWith(friendly(error));
 
   revalidateMenu(businessId);
+  return okWith(
+    formData.get("value") === "true"
+      ? "Item em destaque."
+      : "Item fora dos destaques.",
+  );
 }
 
 export async function deleteProduct(formData: FormData) {
   const id = int(formData, "id");
   const businessId = int(formData, "businessId");
   const supabase = await clientFor(businessId);
-  if (!supabase) return fail(formData, NO_PERMISSION);
+  if (!supabase) return failWith(NO_PERMISSION);
 
   const { error } = await supabase.from("products").delete().eq("id", id);
-  if (error) return fail(formData, friendly(error));
+  if (error) return failWith(friendly(error));
 
   revalidateMenu(businessId);
+  return okWith("Item excluído.");
 }
 
 export async function moveProduct(formData: FormData) {
@@ -400,14 +423,14 @@ export async function moveProduct(formData: FormData) {
   const businessId = int(formData, "businessId");
   const direction = text(formData, "direction");
   const supabase = await clientFor(businessId);
-  if (!supabase) return fail(formData, NO_PERMISSION);
+  if (!supabase) return failWith(NO_PERMISSION);
 
   const { data: product } = await supabase
     .from("products")
     .select("id, menu_category_id, sort_order")
     .eq("id", id)
     .maybeSingle();
-  if (!product?.menu_category_id) return;
+  if (!product?.menu_category_id) return noop;
 
   const { data: siblings } = await supabase
     .from("products")
@@ -418,7 +441,7 @@ export async function moveProduct(formData: FormData) {
   const rows = siblings ?? [];
   const index = rows.findIndex((row) => row.id === id);
   const target = direction === "up" ? index - 1 : index + 1;
-  if (index < 0 || target < 0 || target >= rows.length) return;
+  if (index < 0 || target < 0 || target >= rows.length) return noop;
 
   await supabase
     .from("products")
@@ -430,6 +453,7 @@ export async function moveProduct(formData: FormData) {
     .eq("id", rows[target].id);
 
   revalidateMenu(businessId);
+  return okWith("Item movido.");
 }
 
 /* ------------------------------------------------------------------ */
@@ -537,12 +561,12 @@ export async function updateOptionGroup(formData: FormData) {
   const id = int(formData, "id");
   const businessId = int(formData, "businessId");
   const supabase = await clientFor(businessId);
-  if (!supabase) return fail(formData, NO_PERMISSION);
+  if (!supabase) return failWith(NO_PERMISSION);
 
   const minSelect = int(formData, "minSelect");
   const maxSelect = int(formData, "maxSelect");
   if (minSelect > maxSelect) {
-    return fail(formData, "O mínimo não pode ser maior que o máximo.");
+    return failWith("O mínimo não pode ser maior que o máximo.");
   }
 
   const { error } = await supabase
@@ -555,9 +579,10 @@ export async function updateOptionGroup(formData: FormData) {
       is_flavor_group: formData.get("isFlavorGroup") === "on",
     })
     .eq("id", id);
-  if (error) return fail(formData, friendly(error));
+  if (error) return failWith(friendly(error));
 
   revalidateMenu(businessId);
+  return okWith("Grupo salvo.");
 }
 
 export async function createOptionValue(
@@ -609,27 +634,31 @@ export async function toggleOptionValue(formData: FormData) {
   const id = int(formData, "id");
   const businessId = int(formData, "businessId");
   const supabase = await clientFor(businessId);
-  if (!supabase) return fail(formData, NO_PERMISSION);
+  if (!supabase) return failWith(NO_PERMISSION);
 
   const { error } = await supabase
     .from("option_values")
     .update({ is_available: formData.get("value") === "true" })
     .eq("id", id);
-  if (error) return fail(formData, friendly(error));
+  if (error) return failWith(friendly(error));
 
   revalidateMenu(businessId);
+  return okWith(
+    formData.get("value") === "true" ? "Opção disponível." : "Opção pausada.",
+  );
 }
 
 export async function deleteOptionValue(formData: FormData) {
   const id = int(formData, "id");
   const businessId = int(formData, "businessId");
   const supabase = await clientFor(businessId);
-  if (!supabase) return fail(formData, NO_PERMISSION);
+  if (!supabase) return failWith(NO_PERMISSION);
 
   const { error } = await supabase.from("option_values").delete().eq("id", id);
-  if (error) return fail(formData, friendly(error));
+  if (error) return failWith(friendly(error));
 
   revalidateMenu(businessId);
+  return okWith("Opção excluída.");
 }
 
 /**
@@ -716,15 +745,13 @@ async function applyOrder(
   scope: OrderScope,
   owner: number,
   ids: number[],
-  formData: FormData,
-): Promise<void> {
-  if (ids.length === 0) return;
+): Promise<MenuActionResult | null> {
+  if (ids.length === 0) return null;
 
   const owned = await orderableIds(supabase, scope, owner);
   const permitted = new Set((owned ?? []).map((row) => row.id));
   if (ids.length !== permitted.size || ids.some((id) => !permitted.has(id))) {
-    fail(formData, NO_PERMISSION);
-    return;
+    return failWith(NO_PERMISSION);
   }
 
   // Um update por posição, todos em paralelo. `upsert` resolveria numa
@@ -735,7 +762,8 @@ async function applyOrder(
     ids.map((id, index) => setSortOrder(supabase, scope, owner, id, index + 1)),
   );
   const failed = results.find((result) => result.error);
-  if (failed?.error) fail(formData, friendly(failed.error));
+  if (failed?.error) return failWith(friendly(failed.error));
+  return null;
 }
 
 /** Lê `ids` do form: lista de ids na nova ordem, separada por vírgula. */
@@ -753,11 +781,17 @@ function orderFromForm(formData: FormData): number[] {
 export async function reorderOptionGroups(formData: FormData) {
   const businessId = int(formData, "businessId");
   const supabase = await clientFor(businessId);
-  if (!supabase) return fail(formData, NO_PERMISSION);
+  if (!supabase) return failWith(NO_PERMISSION);
 
-  const ids = orderFromForm(formData);
-  await applyOrder(supabase, { table: "option_groups" }, businessId, ids, formData);
+  const reorderError = await applyOrder(
+    supabase,
+    { table: "option_groups" },
+    businessId,
+    orderFromForm(formData),
+  );
+  if (reorderError) return reorderError;
   revalidateMenu(businessId);
+  return okWith("Ordem dos grupos salva.");
 }
 
 /**
@@ -770,36 +804,38 @@ export async function reorderOptionValues(formData: FormData) {
   const businessId = int(formData, "businessId");
   const optionGroupId = int(formData, "optionGroupId");
   const supabase = await clientFor(businessId);
-  if (!supabase) return fail(formData, NO_PERMISSION);
-  if (!Number.isInteger(optionGroupId)) return fail(formData, "Grupo inválido.");
+  if (!supabase) return failWith(NO_PERMISSION);
+  if (!Number.isInteger(optionGroupId)) return failWith("Grupo inválido.");
 
   const { data: group } = await supabase
     .from("option_groups")
     .select("id, business_id")
     .eq("id", optionGroupId)
     .maybeSingle();
-  if (group?.business_id !== businessId) return fail(formData, NO_PERMISSION);
+  if (group?.business_id !== businessId) return failWith(NO_PERMISSION);
 
-  await applyOrder(
+  const reorderError = await applyOrder(
     supabase,
     { table: "option_values" },
     optionGroupId,
     orderFromForm(formData),
-    formData,
   );
+  if (reorderError) return reorderError;
   revalidateMenu(businessId);
+  return okWith("Ordem das opções salva.");
 }
 
 export async function deleteOptionGroup(formData: FormData) {
   const id = int(formData, "id");
   const businessId = int(formData, "businessId");
   const supabase = await clientFor(businessId);
-  if (!supabase) return fail(formData, NO_PERMISSION);
+  if (!supabase) return failWith(NO_PERMISSION);
 
   const { error } = await supabase.from("option_groups").delete().eq("id", id);
-  if (error) return fail(formData, friendly(error));
+  if (error) return failWith(friendly(error));
 
   revalidateMenu(businessId);
+  return okWith("Grupo excluído.");
 }
 
 export async function linkProductToOptionGroup(formData: FormData) {
@@ -807,17 +843,18 @@ export async function linkProductToOptionGroup(formData: FormData) {
   const optionGroupId = int(formData, "optionGroupId");
   const productId = int(formData, "productId");
   const supabase = await clientFor(businessId);
-  if (!supabase) return fail(formData, NO_PERMISSION);
+  if (!supabase) return failWith(NO_PERMISSION);
   if (!Number.isInteger(optionGroupId) || !Number.isInteger(productId)) {
-    return fail(formData, "Vínculo inválido.");
+    return failWith("Vínculo inválido.");
   }
 
   const { error } = await supabase
     .from("product_option_groups")
     .upsert({ product_id: productId, option_group_id: optionGroupId });
-  if (error) return fail(formData, friendly(error));
+  if (error) return failWith(friendly(error));
 
   revalidateMenu(businessId);
+  return okWith("Grupo vinculado ao item.");
 }
 
 export async function unlinkProductFromOptionGroup(formData: FormData) {
@@ -825,14 +862,15 @@ export async function unlinkProductFromOptionGroup(formData: FormData) {
   const optionGroupId = int(formData, "optionGroupId");
   const productId = int(formData, "productId");
   const supabase = await clientFor(businessId);
-  if (!supabase) return fail(formData, NO_PERMISSION);
+  if (!supabase) return failWith(NO_PERMISSION);
 
   const { error } = await supabase
     .from("product_option_groups")
     .delete()
     .eq("product_id", productId)
     .eq("option_group_id", optionGroupId);
-  if (error) return fail(formData, friendly(error));
+  if (error) return failWith(friendly(error));
 
   revalidateMenu(businessId);
+  return okWith("Grupo desvinculado do item.");
 }

@@ -17,7 +17,16 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useActionState, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useActionState,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { ImageField } from "@/components/menu/image-field";
 import { formatBRL } from "@/lib/format";
@@ -44,7 +53,11 @@ import {
   updateOptionGroup,
   updateProduct,
 } from "@/lib/menu/actions";
-import { emptyMenuState } from "@/lib/menu/state";
+import {
+  emptyMenuState,
+  type MenuActionResult,
+  type MenuState,
+} from "@/lib/menu/state";
 import type {
   MenuGroup,
   MenuLink,
@@ -52,6 +65,7 @@ import type {
   MenuSection,
   MenuValue,
 } from "@/lib/menu/types";
+import { cn } from "@/lib/utils";
 
 export type { MenuGroup, MenuLink, MenuProduct, MenuSection, MenuValue };
 
@@ -79,16 +93,85 @@ function ErrorNote({ error }: { error: string | null }) {
 }
 
 /**
- * Destino de volta após uma action que falhou.
+ * Action de mutação do editor: DEVOLVE o resultado em vez de redirecionar.
  *
- * As actions do cardápio que rodam em `<form action>` não têm `useActionState`
- * para devolver a mensagem; elas redirecionam para cá com `?erro=`.
+ * O redirect antigo rolava a página ao topo e fechava o painel em edição;
+ * devolvendo `{ error, ok }`, o cliente mostra o toast no lugar e a tela
+ * continua exatamente onde o lojista estava.
  */
-function BackTo({ backTo }: { backTo: string }) {
-  return <input type="hidden" name="backTo" value={backTo} />;
+type MenuAction = (formData: FormData) => Promise<MenuActionResult | null>;
+
+type Notify = (message: string, tone?: "ok" | "erro") => void;
+
+const NotifyContext = createContext<Notify>(() => {});
+
+async function runMenuAction(
+  action: MenuAction,
+  formData: FormData,
+  notify: Notify,
+): Promise<void> {
+  const result = await action(formData);
+  if (result?.error) notify(result.error, "erro");
+  else if (result?.ok) notify(result.ok);
 }
 
-type FormAction = (formData: FormData) => void | Promise<void>;
+/**
+ * Liga uma action de mutação a um `<form action>` com toast: envia, lê o
+ * resultado devolvido e notifica — sem navegação, sem perder scroll nem o
+ * painel aberto.
+ */
+function useNotifyAction(action: MenuAction) {
+  const notify = useContext(NotifyContext);
+  return useCallback(
+    (formData: FormData) => runMenuAction(action, formData, notify),
+    [action, notify],
+  );
+}
+
+/** Aviso flutuante do editor: confirmação de sucesso ou motivo da falha. */
+type EditorToast = {
+  /** Sequência: remontar o componente reinicia a animação a cada aviso. */
+  seq: number;
+  message: string;
+  tone: "ok" | "erro";
+};
+
+/** O aviso em si. `key={toast.seq}` em quem renderiza reinicia a animação. */
+function ToastView({
+  toast,
+  onClose,
+}: {
+  toast: EditorToast;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const timer = setTimeout(onClose, 3800);
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  const ok = toast.tone === "ok";
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={cn(
+        "animate-aviso-entra fixed bottom-5 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center gap-3 rounded-card border bg-white px-4 py-3 shadow-card-hover",
+        ok ? "border-sucesso/40" : "border-erro/40",
+      )}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          "animate-check-pop flex h-7 w-7 shrink-0 items-center justify-center rounded-pill text-sm font-black text-white",
+          ok ? "bg-sucesso" : "bg-erro",
+        )}
+      >
+        {ok ? "✓" : "!"}
+      </span>
+      <p className="text-sm font-bold text-texto-forte">{toast.message}</p>
+    </div>
+  );
+}
 
 /** Botão que liga/desliga um campo booleano sem abrir a edição. */
 function ToggleButton({
@@ -101,7 +184,7 @@ function ToggleButton({
   activeClass,
   children,
 }: {
-  action: FormAction;
+  action: MenuAction;
   id: number;
   businessId: number;
   value: boolean;
@@ -110,8 +193,9 @@ function ToggleButton({
   activeClass: string;
   children: React.ReactNode;
 }) {
+  const submit = useNotifyAction(action);
   return (
-    <form action={action}>
+    <form action={submit}>
       <input type="hidden" name="id" value={id} />
       <input type="hidden" name="businessId" value={businessId} />
       <input type="hidden" name="value" value={value ? "true" : "false"} />
@@ -138,15 +222,16 @@ function ArrowButton({
   title,
   glyph,
 }: {
-  action: FormAction;
+  action: MenuAction;
   id: number;
   businessId: number;
   direction: "up" | "down";
   title: string;
   glyph: string;
 }) {
+  const submit = useNotifyAction(action);
   return (
-    <form action={action}>
+    <form action={submit}>
       <input type="hidden" name="id" value={id} />
       <input type="hidden" name="businessId" value={businessId} />
       <input type="hidden" name="direction" value={direction} />
@@ -291,7 +376,6 @@ function reorder<T extends { id: number }>(list: T[], order: number[] | null): T
 
 export function MenuEditor({
   businessId,
-  backTo,
   previewHref,
   sections,
   products,
@@ -300,7 +384,6 @@ export function MenuEditor({
   links,
 }: {
   businessId: number;
-  backTo: string;
   previewHref: string;
   sections: MenuSection[];
   products: MenuProduct[];
@@ -322,18 +405,65 @@ export function MenuEditor({
   const [groupOrder, setGroupOrder] = useState<number[] | null>(null);
   const [valueOrder, setValueOrder] = useState<Record<number, number[]>>({});
   const [sectionOrder, setSectionOrder] = useState<number[] | null>(null);
-  const [sectionState, sectionAction, sectionPending] =
-    useActionState(createMenuSection, emptyMenuState);
+
+  const [toast, setToast] = useState<EditorToast | null>(null);
+  const toastSeq = useRef(0);
+  const notify = useCallback((message: string, tone: "ok" | "erro" = "ok") => {
+    toastSeq.current += 1;
+    setToast({ seq: toastSeq.current, message, tone });
+  }, []);
+  const closeToast = useCallback(() => setToast(null), []);
+
+  // As reordenações disparam daqui (MenuEditor é quem provê o contexto), então
+  // o wrapper recebe `notify` direto em vez de consumi-lo.
+  const reorderSectionsAction = useCallback(
+    (formData: FormData) => runMenuAction(reorderMenuSections, formData, notify),
+    [notify],
+  );
+  const reorderGroupsAction = useCallback(
+    (formData: FormData) => runMenuAction(reorderOptionGroups, formData, notify),
+    [notify],
+  );
+  const reorderValuesAction = useCallback(
+    (formData: FormData) => runMenuAction(reorderOptionValues, formData, notify),
+    [notify],
+  );
+
+  /**
+   * Creates via `useActionState`: o estado devolvido pela action só carrega o
+   * erro, então o sucesso (action resolveu sem `error`) dispara o toast aqui,
+   * no cliente — as demais actions avisam pelo wrapper `useNotifyAction`.
+   */
+  const [sectionState, sectionAction, sectionPending] = useActionState(
+    async (prev: MenuState, formData: FormData): Promise<MenuState> => {
+      const result = await createMenuSection(prev, formData);
+      if (!result.error) notify("Seção criada.");
+      return result;
+    },
+    emptyMenuState,
+  );
   const [productState, productAction, productPending] = useActionState(
-    createProduct,
+    async (prev: MenuState, formData: FormData): Promise<MenuState> => {
+      const result = await createProduct(prev, formData);
+      if (!result.error) notify("Item adicionado.");
+      return result;
+    },
     emptyMenuState,
   );
   const [groupState, groupAction, groupPending] = useActionState(
-    createOptionGroup,
+    async (prev: MenuState, formData: FormData): Promise<MenuState> => {
+      const result = await createOptionGroup(prev, formData);
+      if (!result.error) notify("Grupo criado.");
+      return result;
+    },
     emptyMenuState,
   );
   const [valueState, valueAction, valuePending] = useActionState(
-    createOptionValue,
+    async (prev: MenuState, formData: FormData): Promise<MenuState> => {
+      const result = await createOptionValue(prev, formData);
+      if (!result.error) notify("Opção adicionada.");
+      return result;
+    },
     emptyMenuState,
   );
 
@@ -449,25 +579,24 @@ export function MenuEditor({
   const loose = products.filter((product) => product.menu_category_id == null);
 
   return (
+    <NotifyContext.Provider value={notify}>
     <div className="mt-10 space-y-12">
+      {toast ? <ToastView key={toast.seq} toast={toast} onClose={closeToast} /> : null}
       {/*
         Alvos das três reordenações. Um form só, com o campo `optionGroupId`
         preenchido no momento do envio: a action valida a propriedade de cada id
         pelo próprio grupo, então não há como o editor escrever valor de outra
         empresa.
       */}
-      <form id="form-reorder-secoes" action={reorderMenuSections} hidden>
-        <BackTo backTo={backTo} />
+      <form id="form-reorder-secoes" action={reorderSectionsAction} hidden>
         <input type="hidden" name="businessId" value={businessId} />
         <input type="hidden" name="ids" defaultValue="" />
       </form>
-      <form id="form-reorder-grupos" action={reorderOptionGroups} hidden>
-        <BackTo backTo={backTo} />
+      <form id="form-reorder-grupos" action={reorderGroupsAction} hidden>
         <input type="hidden" name="businessId" value={businessId} />
         <input type="hidden" name="ids" defaultValue="" />
       </form>
-      <form id="form-reorder-valores" action={reorderOptionValues} hidden>
-        <BackTo backTo={backTo} />
+      <form id="form-reorder-valores" action={reorderValuesAction} hidden>
         <input type="hidden" name="businessId" value={businessId} />
         <input type="hidden" name="optionGroupId" defaultValue="" />
         <input type="hidden" name="ids" defaultValue="" />
@@ -579,7 +708,6 @@ export function MenuEditor({
                         {open ? (
                           <SectionBody
                             businessId={businessId}
-                            backTo={backTo}
                             section={section}
                             items={items}
                             groups={sortedGroups}
@@ -627,7 +755,6 @@ export function MenuEditor({
           action={sectionAction}
           className="mt-5 rounded-card border border-borda bg-white p-5"
         >
-          <BackTo backTo={backTo} />
           <input type="hidden" name="businessId" value={businessId} />
           <p className="text-sm font-black text-marca-800">Criar seção</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr]">
@@ -710,7 +837,6 @@ export function MenuEditor({
                   <SortableItem key={group.id} id={group.id}>
                     <OptionGroupCard
                       businessId={businessId}
-                      backTo={backTo}
                       group={group}
                       groupValues={valuesByGroup.get(group.id) ?? []}
                       usedByCount={(productsByGroup.get(group.id) ?? []).length}
@@ -745,7 +871,6 @@ export function MenuEditor({
           action={groupAction}
           className="mt-5 rounded-card border border-borda bg-white p-5"
         >
-          <BackTo backTo={backTo} />
           <input type="hidden" name="businessId" value={businessId} />
           <p className="text-sm font-black text-marca-800">Criar grupo de opção</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-4">
@@ -820,6 +945,7 @@ export function MenuEditor({
         </form>
       </section>
     </div>
+    </NotifyContext.Provider>
   );
 }
 
@@ -827,7 +953,6 @@ export function MenuEditor({
 
 function SectionBody({
   businessId,
-  backTo,
   section,
   items,
   groups,
@@ -837,7 +962,6 @@ function SectionBody({
   productPending,
 }: {
   businessId: number;
-  backTo: string;
   section: MenuSection;
   items: MenuProduct[];
   groups: MenuGroup[];
@@ -847,6 +971,8 @@ function SectionBody({
   productPending: boolean;
 }) {
   const [configuring, setConfiguring] = useState(false);
+  const saveSection = useNotifyAction(updateMenuSection);
+  const removeSection = useNotifyAction(deleteMenuSection);
 
   return (
     <div className="p-5">
@@ -860,7 +986,6 @@ function SectionBody({
             <ProductRow
               key={item.id}
               businessId={businessId}
-              backTo={backTo}
               product={item}
               groups={groups}
               linked={linksByProduct.get(item.id) ?? []}
@@ -969,10 +1094,9 @@ function SectionBody({
 
         {configuring ? (
           <form
-            action={updateMenuSection}
+            action={saveSection}
             className="mt-3 space-y-3 rounded-logo bg-superficie p-4"
           >
-            <BackTo backTo={backTo} />
             <input type="hidden" name="id" value={section.id} />
             <input type="hidden" name="businessId" value={businessId} />
 
@@ -1025,8 +1149,7 @@ function SectionBody({
           </form>
         ) : null}
 
-        <form action={deleteMenuSection} className="mt-3">
-          <BackTo backTo={backTo} />
+        <form action={removeSection} className="mt-3">
           <input type="hidden" name="id" value={section.id} />
           <input type="hidden" name="businessId" value={businessId} />
           <button type="submit" className={dangerButton}>
@@ -1046,7 +1169,6 @@ function SectionBody({
 
 function ProductRow({
   businessId,
-  backTo,
   product,
   groups,
   linked,
@@ -1054,7 +1176,6 @@ function ProductRow({
   isLast,
 }: {
   businessId: number;
-  backTo: string;
   product: MenuProduct;
   groups: MenuGroup[];
   linked: number[];
@@ -1062,6 +1183,10 @@ function ProductRow({
   isLast: boolean;
 }) {
   const [editing, setEditing] = useState(false);
+  const saveProduct = useNotifyAction(updateProduct);
+  const removeProduct = useNotifyAction(deleteProduct);
+  const linkGroup = useNotifyAction(linkProductToOptionGroup);
+  const unlinkGroup = useNotifyAction(unlinkProductFromOptionGroup);
   const usesOwnGroups = linked.length > 0;
   const hasPromo = product.compare_at_cents > product.price_cents;
 
@@ -1183,10 +1308,9 @@ function ProductRow({
 
       {editing ? (
         <form
-          action={updateProduct}
+          action={saveProduct}
           className="mt-4 space-y-3 rounded-logo bg-superficie p-4"
         >
-          <BackTo backTo={backTo} />
           <input type="hidden" name="id" value={product.id} />
           <input type="hidden" name="businessId" value={businessId} />
 
@@ -1294,8 +1418,7 @@ function ProductRow({
               const on = linked.includes(group.id);
               return (
                 <li key={group.id}>
-                  <form action={on ? unlinkProductFromOptionGroup : linkProductToOptionGroup}>
-                    <BackTo backTo={backTo} />
+                  <form action={on ? unlinkGroup : linkGroup}>
                     <input type="hidden" name="businessId" value={businessId} />
                     <input type="hidden" name="productId" value={product.id} />
                     <input type="hidden" name="optionGroupId" value={group.id} />
@@ -1323,8 +1446,7 @@ function ProductRow({
         </div>
       ) : null}
 
-      <form action={deleteProduct} className="mt-3">
-        <BackTo backTo={backTo} />
+      <form action={removeProduct} className="mt-3">
         <input type="hidden" name="id" value={product.id} />
         <input type="hidden" name="businessId" value={businessId} />
         <button type="submit" className="text-xs font-bold text-texto-tenue hover:text-erro-700">
@@ -1339,7 +1461,6 @@ function ProductRow({
 
 function OptionGroupCard({
   businessId,
-  backTo,
   group,
   groupValues,
   usedByCount,
@@ -1355,7 +1476,6 @@ function OptionGroupCard({
   valuePending,
 }: {
   businessId: number;
-  backTo: string;
   group: MenuGroup;
   groupValues: MenuValue[];
   /** Quantos produtos marcam este grupo. `0` = invisível para o cliente. */
@@ -1373,6 +1493,9 @@ function OptionGroupCard({
   valuePending: boolean;
 }) {
   const [editing, setEditing] = useState(false);
+  const saveGroup = useNotifyAction(updateOptionGroup);
+  const removeGroup = useNotifyAction(deleteOptionGroup);
+  const removeValue = useNotifyAction(deleteOptionValue);
   const available = groupValues.filter((value) => value.is_available).length;
 
   return (
@@ -1442,8 +1565,7 @@ function OptionGroupCard({
               >
                 {editing ? "Fechar" : "Editar"}
               </button>
-              <form action={deleteOptionGroup}>
-                <BackTo backTo={backTo} />
+              <form action={removeGroup}>
                 <input type="hidden" name="id" value={group.id} />
                 <input type="hidden" name="businessId" value={businessId} />
                 <button type="submit" className={dangerButton}>
@@ -1523,8 +1645,7 @@ function OptionGroupCard({
                           >
                             {value.is_available ? "⏸" : "▶"}
                           </ToggleButton>
-                          <form action={deleteOptionValue} className="contents">
-                            <BackTo backTo={backTo} />
+                          <form action={removeValue} className="contents">
                             <input type="hidden" name="id" value={value.id} />
                             <input type="hidden" name="businessId" value={businessId} />
                             <button
@@ -1551,10 +1672,9 @@ function OptionGroupCard({
 
           {editing ? (
             <form
-              action={updateOptionGroup}
+              action={saveGroup}
               className="mt-4 grid gap-3 rounded-logo bg-superficie p-4 sm:grid-cols-[1fr_5rem_5rem]"
             >
-              <BackTo backTo={backTo} />
               <input type="hidden" name="id" value={group.id} />
               <input type="hidden" name="businessId" value={businessId} />
               <div>

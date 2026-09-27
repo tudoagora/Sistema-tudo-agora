@@ -57,7 +57,6 @@ export default async function PanelMenuPage(
 
       <MenuEditor
         businessId={business.id}
-        backTo={`/painel/${business.id}/cardapio`}
         previewHref={previewHref}
         {...data}
       />
