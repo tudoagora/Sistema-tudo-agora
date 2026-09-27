@@ -933,8 +933,15 @@ function ItemCard({
           {item.option_groups.map((group) => {
             const ids = selection[group.id] ?? [];
             const falta = missing.includes(group.name);
-            return (
-              <fieldset key={group.id}>
+            // O grupo que traz "2 Sabores" abre o seletor de metades logo
+            // abaixo dele. Os dois blocos voltam como irmãos dentro do
+            // `space-y-4` do painel, e é isso que mantém o espaçamento igual
+            // ao de antes.
+            const abreMetades = group.values.some(
+              (value) => value.halves_count > 0,
+            );
+            return [
+              <fieldset key="opcoes">
                 <legend className="text-xs font-bold text-texto-forte">
                   {group.name}
                   {group.is_required ? (
@@ -983,87 +990,19 @@ function ItemCard({
                     </li>
                   ))}
                 </ul>
-              </fieldset>
-            );
+              </fieldset>,
+              abreMetades && quantasMetades > 0 ? (
+                <HalfPicker
+                  key="metades"
+                  quantasMetades={quantasMetades}
+                  halfOptions={halfOptions}
+                  halves={halves}
+                  basePriceCents={item.price_cents}
+                  onPick={onHalf}
+                />
+              ) : null,
+            ];
           })}
-
-          {/*
-            Só aparece quando algum valor escolhido é "2 Sabores". Fica depois
-            dos grupos porque é consequência de uma escolha feita neles — abrir
-            antes faria o cliente procurar sabor em item que nem pediu ainda.
-
-            Cartões, não `<select>`: no celular um dropdown esconde o preço dos
-            outros sabores e custa dois toques para comparar, que é a única
-            razão de o meio a meio existir. Cada lado é escolhido aqui, com o
-            sabor base já escolhido em cima.
-          */}
-          {quantasMetades > 0 ? (
-            <fieldset className="rounded-card border border-marca-600/30 bg-white p-3">
-              <legend className="px-1 text-xs font-bold text-marca-800">
-                Escolha {quantasMetades === 2 ? "os dois sabores" : `${quantasMetades} sabores`}
-                <span className="ml-1 font-normal text-texto-suave">
-                  paga o mais caro
-                </span>
-              </legend>
-
-              {halfOptions.length === 0 ? (
-                <p className="mt-2 text-xs text-texto-suave">
-                  Ainda não há outros sabores disponíveis para esta seção.
-                </p>
-              ) : null}
-
-              <div className="mt-2 space-y-3">
-                {Array.from({ length: quantasMetades }, (_, posicao) => {
-                  const escolhido = halves[posicao] ?? 0;
-                  return (
-                    <div key={posicao}>
-                      <p className="text-[11px] font-bold uppercase tracking-wide text-texto-tenue">
-                        {posicao === 0 ? "1ª metade" : posicao === 1 ? "2ª metade" : `${posicao + 1}ª metade`}
-                      </p>
-                      <ul className="mt-1.5 flex flex-wrap gap-2">
-                        {halfOptions.map((option) => {
-                          const ativo = escolhido === option.id;
-                          return (
-                            <li key={option.id}>
-                              <button
-                                type="button"
-                                onClick={() => onHalf(posicao, option.id)}
-                                aria-pressed={ativo}
-                                className={cn(
-                                  "min-h-9 rounded-pill border px-3 py-1 text-xs font-semibold transition-colors",
-                                  ativo
-                                    ? "border-marca-600 bg-marca-600 text-white"
-                                    : "border-borda-forte bg-white text-texto-forte hover:border-marca-600",
-                                )}
-                              >
-                                {option.name}
-                                {/*
-                                  Só mostra o preço quando ele é maior que o da
-                                  base. Repetir R$ 45,00 em 14 cartões vizinhos
-                                  seria ruído; o que importa aqui é "esta
-                                  metade encarece o pedido".
-                                */}
-                                {option.price_cents > item.price_cents ? (
-                                  <span
-                                    className={cn(
-                                      "ml-1",
-                                      ativo ? "text-white/80" : "text-marca-600",
-                                    )}
-                                  >
-                                    {formatBRL(option.price_cents)}
-                                  </span>
-                                ) : null}
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  );
-                })}
-              </div>
-            </fieldset>
-          ) : null}
 
           {missing.length > 0 ? (
             <p role="status" className="text-xs font-bold text-erro-700">
@@ -1085,6 +1024,98 @@ function ItemCard({
         </div>
       ) : null}
     </li>
+  );
+}
+
+/**
+ * Seletor de metades ("Escolha os dois sabores").
+ *
+ * Vive num componente próprio — como `Stepper` e `Review` — porque agora é
+ * renderizado dentro do `map` dos grupos: ele nasce colado ao grupo que traz
+ * "2 Sabores", e não no fim da lista. Com Borda e Extras no meio do caminho, o
+ * cliente marcava "2 Sabores" e o passo seguinte aparecia fora da tela, sem
+ * nada indicando que faltava escolher.
+ *
+ * Cartões, não `<select>`: no celular um dropdown esconde o preço dos outros
+ * sabores e custa dois toques para comparar, que é a única razão de o meio a
+ * meio existir.
+ */
+function HalfPicker({
+  quantasMetades,
+  halfOptions,
+  halves,
+  basePriceCents,
+  onPick,
+}: {
+  quantasMetades: number;
+  halfOptions: StoreItem[];
+  halves: readonly number[];
+  basePriceCents: number;
+  onPick: (posicao: number, productId: number) => void;
+}) {
+  return (
+    <fieldset className="rounded-card border border-marca-600/30 bg-white p-3">
+      <legend className="px-1 text-xs font-bold text-marca-800">
+        Escolha {quantasMetades === 2 ? "os dois sabores" : `${quantasMetades} sabores`}
+        <span className="ml-1 font-normal text-texto-suave">paga o mais caro</span>
+      </legend>
+
+      {halfOptions.length === 0 ? (
+        <p className="mt-2 text-xs text-texto-suave">
+          Ainda não há outros sabores disponíveis para esta seção.
+        </p>
+      ) : null}
+
+      <div className="mt-2 space-y-3">
+        {Array.from({ length: quantasMetades }, (_, posicao) => {
+          const escolhido = halves[posicao] ?? 0;
+          return (
+            <div key={posicao}>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-texto-tenue">
+                {posicao === 0 ? "1ª metade" : posicao === 1 ? "2ª metade" : `${posicao + 1}ª metade`}
+              </p>
+              <ul className="mt-1.5 flex flex-wrap gap-2">
+                {halfOptions.map((option) => {
+                  const ativo = escolhido === option.id;
+                  return (
+                    <li key={option.id}>
+                      <button
+                        type="button"
+                        onClick={() => onPick(posicao, option.id)}
+                        aria-pressed={ativo}
+                        className={cn(
+                          "min-h-9 rounded-pill border px-3 py-1 text-xs font-semibold transition-colors",
+                          ativo
+                            ? "border-marca-600 bg-marca-600 text-white"
+                            : "border-borda-forte bg-white text-texto-forte hover:border-marca-600",
+                        )}
+                      >
+                        {option.name}
+                        {/*
+                          Só mostra o preço quando ele é maior que o da base.
+                          Repetir R$ 45,00 em 14 cartões vizinhos seria ruído; o
+                          que importa aqui é "esta metade encarece o pedido".
+                        */}
+                        {option.price_cents > basePriceCents ? (
+                          <span
+                            className={cn(
+                              "ml-1",
+                              ativo ? "text-white/80" : "text-marca-600",
+                            )}
+                          >
+                            {formatBRL(option.price_cents)}
+                          </span>
+                        ) : null}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
+    </fieldset>
   );
 }
 
