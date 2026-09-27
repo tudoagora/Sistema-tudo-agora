@@ -16,7 +16,10 @@ function normalizeUrl(value: string | undefined | null): string | null {
  *
  * Fase de teste (hoje): manda o endereço do próprio deploy, porque o domínio
  * oficial ainda responde pelo WordPress antigo — apontar metadata e OpenGraph
- * para lá levaria o visitante ao site errado. O Vercel injeta `VERCEL_URL`
+ * para lá levaria o visitante ao site errado. `VERCEL_PROJECT_PRODUCTION_URL`
+ * é o domínio estável do projeto (`<projeto>.vercel.app`, o mesmo que o
+ * cliente digita); `VERCEL_URL` é o endereço imutável daquele deploy, que muda
+ * a cada publicação e por isso é só a segunda opção. O Vercel injeta as duas
  * sozinho em todo build, então não há nada a cadastrar.
  *
  * Na migração, cadastre no Vercel
@@ -33,6 +36,15 @@ function resolveSiteUrl(value: string | undefined): string {
   // Domínio oficial só entra quando pedido de propósito (dia da virada).
   if (explicit && process.env.NEXT_PUBLIC_FORCE_SITE_URL === "true") return explicit;
 
+  // Endereço estável do projeto: é o que o cliente digita e compartilha.
+  const stable = normalizeUrl(
+    process.env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+      : null,
+  );
+  if (stable) return stable;
+
+  // Endereço imutável deste deploy, que muda a cada publicação.
   const deployment = normalizeUrl(
     process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null,
   );
