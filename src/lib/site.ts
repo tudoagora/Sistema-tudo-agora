@@ -53,17 +53,67 @@ function resolveSiteUrl(value: string | undefined): string {
   return explicit ?? DEFAULT_SITE_URL;
 }
 
+const resolvedUrl = resolveSiteUrl(process.env.NEXT_PUBLIC_SITE_URL);
+const resolvedOrigin = new URL(resolvedUrl);
+
 export const siteConfig = {
   name: "Tudo Agora",
   tagline: "Tudo o que você procura, mais perto de você",
   description:
     "O Tudo Agora conecta você a lojas, serviços e restaurantes da sua cidade. Comida, farmácia, serviços, utilidades e muito mais.",
-  url: resolveSiteUrl(process.env.NEXT_PUBLIC_SITE_URL),
+  url: resolvedUrl,
   locale: "pt-BR",
   whatsapp: "5566992391831",
   phoneDisplay: "(66) 99239-1831",
   supportEmail: "contato@tudoagora.app.br",
 } as const;
+
+/**
+ * Vitrine por subdomínio de empresa (`slug.dominio`) só existe no domínio
+ * oficial: a Vercel não emite certificado nem aceita wildcard para
+ * `*.vercel.app`, então durante a fase de teste o formato continua sendo o
+ * caminho `/cardapio/slug`. A condição é a mesma da virada de domínio em
+ * `resolveSiteUrl` (`NEXT_PUBLIC_FORCE_SITE_URL=true`), com a trava extra do
+ * `vercel.app` para uma env configurada cedo demais não gerar link quebrado.
+ *
+ * No dia da migração, além das duas envs, o projeto precisa do domínio
+ * wildcard `*.tudoagora.app.br` cadastrado na Vercel e do CNAME `*` no DNS.
+ */
+export const storefrontSubdomains =
+  process.env.NEXT_PUBLIC_FORCE_SITE_URL === "true" &&
+  !resolvedOrigin.hostname.endsWith(".vercel.app");
+
+/**
+ * URL pública da vitrine de uma empresa: subdomínio quando o domínio oficial
+ * estiver no ar, caminho `/cardapio/slug` enquanto não estiver. É o endereço
+ * que vai em canonical, OpenGraph e JSON-LD — os links que o visitante
+ * compartilha e que o Google indexa.
+ */
+export function storefrontUrl(slug: string): string {
+  return storefrontSubdomains
+    ? `${resolvedOrigin.protocol}//${slug}.${resolvedOrigin.hostname}`
+    : `${resolvedUrl}/cardapio/${slug}`;
+}
+
+/** Mesmo formato exigido pelo check `businesses_custom_slug_format` do banco. */
+const SLUG_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+/**
+ * Extrai o slug da empresa de um hostname de vitrine
+ * (`pizzaria-do-teste.tudoagora.app.br` → `pizzaria-do-teste`), ou `null`
+ * quando o host não é um subdomínio de vitrine. O `www` fica de fora porque
+ * pertence ao site principal, e o wildcard do DNS cobre um nível só — por
+ * isso prefixo com ponto não é vitrine.
+ */
+export function storefrontSlugFromHost(hostname: string): string | null {
+  if (!storefrontSubdomains) return null;
+  const base = resolvedOrigin.hostname;
+  if (!hostname.endsWith(`.${base}`)) return null;
+
+  const slug = hostname.slice(0, hostname.length - base.length - 1);
+  if (slug === "www" || !SLUG_RE.test(slug)) return null;
+  return slug;
+}
 
 /**
  * Link de contato com o suporte. O WhatsApp tem prioridade; o e-mail é a

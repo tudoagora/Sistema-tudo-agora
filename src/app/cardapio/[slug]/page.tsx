@@ -9,7 +9,7 @@ import {
 } from "@/components/menu/storefront";
 import { getMenuBySlug } from "@/lib/catalog";
 import { getCityBySlug } from "@/lib/catalog";
-import { siteConfig } from "@/lib/site";
+import { storefrontUrl } from "@/lib/site";
 
 type PageParams = { params: Promise<{ slug: string }> };
 
@@ -37,7 +37,10 @@ export async function generateMetadata({
   return {
     title,
     description,
-    alternates: { canonical: `/cardapio/${slug}` },
+    // Absoluto de propósito: no domínio oficial a vitrine vive no subdomínio
+    // da empresa, e é essa URL — não o caminho — que deve ser indexada e
+    // compartilhada.
+    alternates: { canonical: storefrontUrl(slug) },
     openGraph: { title, description, type: "website" },
   };
 }
@@ -93,7 +96,7 @@ export default async function CardapioPage({ params }: PageParams) {
     "@type": "Restaurant",
     name: business.name,
     description: business.description ?? undefined,
-    url: `${siteConfig.url}/cardapio/${slug}`,
+    url: storefrontUrl(slug),
     ...(business.logo_url ? { logo: business.logo_url } : {}),
     ...(citySlug && business.address
       ? { address: { "@type": "PostalAddress", streetAddress: business.address } }

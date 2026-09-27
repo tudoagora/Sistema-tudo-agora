@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { MenuEditor } from "@/components/menu/menu-editor";
 import { requireAdmin } from "@/lib/auth";
 import { loadMenuEditorData } from "@/lib/menu/load";
+import { storefrontSubdomains, storefrontUrl } from "@/lib/site";
 import { createClient } from "@/lib/supabase/server";
 
 type PageParams = { params: Promise<{ id: string }> };
@@ -31,6 +32,12 @@ export default async function BusinessMenuPage({ params }: PageParams) {
 
   const data = await loadMenuEditorData(supabase, businessId);
 
+  // Subdomínio da empresa no domínio oficial; caminho relativo antes dele.
+  const slug = business.custom_slug ?? business.slug;
+  const previewHref = storefrontSubdomains
+    ? storefrontUrl(slug)
+    : `/cardapio/${slug}`;
+
   return (
     <>
       <a
@@ -55,7 +62,7 @@ export default async function BusinessMenuPage({ params }: PageParams) {
       <MenuEditor
         businessId={businessId}
         backTo={`/admin/empresas/${businessId}/cardapio`}
-        previewHref={`/cardapio/${business.custom_slug ?? business.slug}`}
+        previewHref={previewHref}
         {...data}
       />
     </>

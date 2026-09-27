@@ -3,6 +3,7 @@ import Link from "next/link";
 import { PanelNav } from "@/components/business/panel-nav";
 import { BusinessAvatar } from "@/components/business-card";
 import { requireBusinessMember } from "@/lib/auth";
+import { storefrontSubdomains, storefrontUrl } from "@/lib/site";
 
 export default async function PanelBusinessLayout({
   children,
@@ -14,7 +15,13 @@ export default async function PanelBusinessLayout({
   const { empresa } = await params;
   const { business } = await requireBusinessMember(Number(empresa));
 
-  const vitrineHref = `/cardapio/${business.customSlug ?? business.slug}` as const;
+  // No domínio oficial o botão já mostra o endereço definitivo da vitrine
+  // (subdomínio da empresa); antes dele, o caminho relativo de sempre — que é
+  // o que funciona no `vercel.app` e no desenvolvimento local.
+  const slug = business.customSlug ?? business.slug;
+  const vitrineHref = storefrontSubdomains
+    ? storefrontUrl(slug)
+    : `/cardapio/${slug}`;
 
   return (
     <div className="mt-6">
@@ -37,14 +44,16 @@ export default async function PanelBusinessLayout({
           </h1>
           <p className="truncate text-xs text-texto-tenue">{business.cityName}</p>
         </div>
-        <Link
+        {/* `<a>` em vez de `Link`: com subdomínio o destino é outra origem, e
+            o `typedRoutes` só aceita string calculada em âncora comum. */}
+        <a
           href={vitrineHref}
           target="_blank"
           rel="noopener"
           className="min-h-10 rounded-pill border border-borda-forte px-5 text-sm font-bold text-texto-suave hover:border-marca-600 hover:text-marca-800"
         >
           Ver cardápio ↗
-        </Link>
+        </a>
       </header>
 
       <PanelNav

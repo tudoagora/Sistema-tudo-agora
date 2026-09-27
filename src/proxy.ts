@@ -2,10 +2,11 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+import { storefrontSlugFromHost } from "@/lib/site";
 import type { Database } from "@/lib/supabase/database.types";
 
 /**
- * O proxy existe por causa do cookie de sessão, e só por isso.
+ * O proxy existe por causa do cookie de sessão, e quase só por isso.
  *
  * O `@supabase/ssr` guarda a sessão num cookie HttpOnly e o JWT do GoTrue
  * expira em cerca de uma hora. Sem uma passada por aqui a cada requisição, o
@@ -17,6 +18,12 @@ import type { Database } from "@/lib/supabase/database.types";
  * A segunda atribuição é trocar o `?code=` da confirmação de e-mail por uma
  * sessão de verdade, pelo mesmo motivo: a resposta do `exchangeCodeForSession`
  * só vira cookie se sair na mesma resposta que o visitante está recebendo.
+ *
+ * A terceira é a vitrine por subdomínio: no domínio oficial,
+ * `pizzaria-do-teste.tudoagora.app.br` reescreve a raiz para
+ * `/cardapio/pizzaria-do-teste` (ver `storefrontSlugFromHost` em
+ * `src/lib/site.ts`). Só a raiz, de propósito — o resto do app continua
+ * navegável no subdomínio, e os Server Actions da vitrine fazem POST nela.
  *
  * Autorização não é responsabilidade deste arquivo. `requireUser`,
  * `requireAdmin` e `requireBusinessMember` já exigem sessão dentro de cada
@@ -50,7 +57,34 @@ export async function proxy(request: NextRequest) {
   // 500 sem contexto já na home pública.
   if (!url || !anonKey) return NextResponse.next();
 
-  let response = NextResponse.next({ request });
+  // Vitrine por subdomínio: só a raiz do host da empresa vira rewrite, para
+  // o resto do app continuar navegável ali dentro. `null` no domínio de teste
+  // (`*.vercel.app` não tem wildcard) e quando o host não é de vitrine.
+  // O domínio real só chega no header `Host` — o Next normaliza
+  // `nextUrl.hostname` para o endereço local do servidor —, e o header pode
+  // trazer porta (`dominio:3000`), que não faz parte do hostname.
+  const host = request.headers.get("host")?.split(":")[0].toLowerCase() ?? "";
+  const storefrontSlug =
+    request.nextUrl.pathname === "/" ? storefrontSlugFromHost(host) : null;
+
+  // Fábrica da resposta "seguir o fluxo": reescreve para a vitrine quando o
+  // host é de empresa, senão apenas continua. O `setAll` abaixo recria a
+  // resposta a cada cookie gravado, e recriar com `NextResponse.next` direto
+  // jogaria o rewrite fora — o visitante veria a home em vez do cardápio.
+  // Os headers do request vão junto porque é neles que o `request.cookies.set`
+  // grava a sessão renovada.
+  function baseResponse(): NextResponse {
+    if (storefrontSlug) {
+      const target = request.nextUrl.clone();
+      target.pathname = `/cardapio/${storefrontSlug}`;
+      return NextResponse.rewrite(target, {
+        request: { headers: request.headers },
+      });
+    }
+    return NextResponse.next({ request });
+  }
+
+  let response = baseResponse();
 
   const supabase = createServerClient<Database>(url, anonKey, {
     cookies: {
@@ -60,12 +94,12 @@ export async function proxy(request: NextRequest) {
       setAll(cookiesToSet) {
         // Primeiro no `request`, para que os Server Components da mesma
         // requisição já leiam o token novo; depois no `response`, para que ele
-        // chegue ao navegador. A resposta é recriada porque `NextResponse.next`
-        // carrega os cookies de quem a construiu.
+        // chegue ao navegador. A resposta é recriada porque carrega os cookies
+        // de quem a construiu.
         for (const { name, value } of cookiesToSet) {
           request.cookies.set(name, value);
         }
-        response = NextResponse.next({ request });
+        response = baseResponse();
         for (const { name, value, options } of cookiesToSet) {
           response.cookies.set(name, value, options);
         }

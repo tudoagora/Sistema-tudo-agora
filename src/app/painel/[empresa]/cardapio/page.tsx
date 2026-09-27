@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { MenuEditor } from "@/components/menu/menu-editor";
 import { requireBusinessMember } from "@/lib/auth";
 import { loadMenuEditorData } from "@/lib/menu/load";
+import { storefrontSubdomains, storefrontUrl } from "@/lib/site";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = {
@@ -19,7 +20,12 @@ export default async function PanelMenuPage(
   const supabase = await createClient();
   const data = await loadMenuEditorData(supabase, business.id);
 
-  const previewHref = `/cardapio/${business.customSlug ?? business.slug}`;
+  // Idem ao cabeçalho do painel: subdomínio no domínio oficial, caminho
+  // relativo enquanto a vitrine não tem host próprio.
+  const slug = business.customSlug ?? business.slug;
+  const previewHref = storefrontSubdomains
+    ? storefrontUrl(slug)
+    : `/cardapio/${slug}`;
 
   return (
     <>
