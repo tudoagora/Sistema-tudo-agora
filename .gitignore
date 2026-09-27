@@ -34,6 +34,10 @@ yarn-error.log*
 .env*
 !.env.example
 
+# service_role baixado do dashboard do Supabase (vem em texto puro)
+service-role*.json
+*-service-role.json
+
 # vercel
 .vercel
 

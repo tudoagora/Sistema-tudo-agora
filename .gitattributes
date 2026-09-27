@@ -1,0 +1,12 @@
+# Normaliza para LF no repositorio e no working tree.
+#
+# Sem isso, o core.autocrlf=true do Windows grava CRLF no hook de
+# pre-commit e o /bin/sh do Git for Windows falha ao executa-lo.
+* text=auto eol=lf
+
+# Assets binarios: sem conversao de fim de linha.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.webp binary
+*.ico  binary

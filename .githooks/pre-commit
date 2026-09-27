@@ -1,0 +1,69 @@
+#!/bin/sh
+# Bloqueia commit de segredos e de estado local do Supabase.
+#
+# Ativado por: git config core.hooksPath .githooks
+# Sem dependencias: roda em qualquer checkout, Windows ou Linux.
+#
+# Escape: SKIP_SECRET_HOOK=1 git commit ...
+
+if [ -n "$SKIP_SECRET_HOOK" ]; then
+  exit 0
+fi
+
+fail() {
+  echo ""
+  echo "COMMIT BLOQUEADO - $1"
+  echo ""
+  shift
+  for line in "$@"; do
+    echo "    $line"
+  done
+  echo ""
+  echo "  Se for falso positivo: SKIP_SECRET_HOOK=1 git commit ..."
+  echo ""
+  exit 1
+}
+
+# --- 1. Caminhos que nunca podem entrar ---------------------------
+# Usa glob de case em vez de regex: mais legivel e sem surpresa de
+# escaping entre sh do Git for Windows e Linux.
+is_forbidden_path() {
+  case "$1" in
+    .env|.env.local|.env.production|.env.development) return 0 ;;
+    supabase/.temp|supabase/.temp/*) return 0 ;;
+    supabase/.branches|supabase/.branches/*) return 0 ;;
+    .vercel|.vercel/*) return 0 ;;
+    service-role*.json|*-service-role.json|key.json) return 0 ;;
+    *.pem|*.p12|*.key) return 0 ;;
+  esac
+  return 1
+}
+
+bad_paths=""
+for p in $(git diff --cached --name-only --diff-filter=ACMR); do
+  if is_forbidden_path "$p"; then
+    bad_paths="$bad_paths $p"
+  fi
+done
+
+if [ -n "$bad_paths" ]; then
+  # shellcheck disable=SC2086
+  fail "arquivo local ou segredo no commit" $bad_paths
+fi
+
+# --- 2. Segredos no conteudo staged -------------------------------
+# O proprio hook contem os padroes, entao ele fica fora do scan.
+# .env.example NAO fica de fora de proposito: os placeholders vazios
+# passam, e um valor real colado no template e barrado.
+SECRETS='(SUPABASE_SERVICE_ROLE_KEY|SUPABASE_DB_PASSWORD|DB_PASSWORD|SMTP_PASS|RESEND_API_KEY|MERCADOPAGO_ACCESS_TOKEN|WHATSAPP_ACCESS_TOKEN|WP_APP_PASSWORD)[[:space:]]*=[[:space:]]*[^[:space:]]|(postgres|postgresql)://[^[:space:]]*:[^[:space:]]*@|re_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|eyJ[A-Za-z0-9_-]{30,}'
+
+leaks=$(git diff --cached --diff-filter=ACMR -- . ':!.githooks' ':!.githooks/**' \
+  | grep '^+' \
+  | grep -v '^+++' \
+  | grep -E "$SECRETS")
+
+if [ -n "$leaks" ]; then
+  fail "valor de segredo no conteudo staged" "$leaks"
+fi
+
+exit 0
