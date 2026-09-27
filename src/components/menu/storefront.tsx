@@ -221,6 +221,30 @@ export function Storefront({
   const [added, setAdded] = useState<AddedNotice | null>(null);
   /** Só para reiniciar a animação a cada adição. */
   const addedSeq = useRef(0);
+  /**
+   * Item em fase de sucesso dentro do modal: o painel mostra o ✓ animado por
+   * um instante e só então fecha, com o toast já aparecendo sobre a barra do
+   * carrinho. `successId` separado de `customizing` porque o modal continua
+   * aberto (e travado para cliques) durante a animação.
+   */
+  const [successId, setSuccessId] = useState<number | null>(null);
+  const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (successTimer.current) clearTimeout(successTimer.current);
+    },
+    [],
+  );
+
+  const customizingItem = useMemo(() => {
+    if (customizing === null) return null;
+    for (const section of visible) {
+      const found = section.items.find((item) => item.id === customizing);
+      if (found) return found;
+    }
+    return null;
+  }, [customizing, visible]);
 
   // O aviso some sozinho: ele confirma, não é um estado que o cliente precise
   // managear. `added` na dependência reinicia o relógio se ele adicionar outro
@@ -283,6 +307,7 @@ export function Storefront({
     setLines([]);
     setDrafts({});
     setCustomizing(null);
+    setSuccessId(null);
     setReviewing(false);
   }
 
@@ -329,21 +354,37 @@ export function Storefront({
         : [...current, { key, item, quantity: 1, selection, notes: "" }];
     });
 
-    // Zera o rascunho e fecha o painel: o item vai para a barra de carrinho
-    // com as opções já registradas, e a próxima vez que o cliente tocar em
-    // "Personalizar" ele monta uma configuração nova do zero.
+    // Zera o rascunho: o item vai para a barra de carrinho com as opções já
+    // registradas, e a próxima vez que o cliente abrir o modal ele monta uma
+    // configuração nova do zero.
     setDrafts((current) => {
       const proximo = { ...current };
       delete proximo[item.id];
       return proximo;
     });
-    setCustomizing(null);
-    setAdded({
+
+    const notice: AddedNotice = {
       seq: addedSeq.current++,
       name: item.name,
       detail: chosenNames(item, selection).join(" · "),
       total: draftPrice(item, selection) * quantidade,
-    });
+    };
+
+    if (customizing === item.id) {
+      // Veio do modal: mostra o ✓ animado dentro do painel, fecha e só então
+      // dispara o toast — a sequência "confirma → guarda → some" lê melhor do
+      // que modal e aviso aparecendo ao mesmo tempo.
+      setSuccessId(item.id);
+      if (successTimer.current) clearTimeout(successTimer.current);
+      successTimer.current = setTimeout(() => {
+        setCustomizing(null);
+        setSuccessId(null);
+        setAdded(notice);
+      }, 900);
+    } else {
+      setCustomizing(null);
+      setAdded(notice);
+    }
   }
 
   function changeQuantity(key: string, delta: number) {
@@ -568,21 +609,13 @@ export function Storefront({
                     const doItem = lines.filter(
                       (line) => line.item.id === item.id,
                     );
-                    const selection = drafts[item.id] ?? {};
                     return (
                       <ItemCard
                         key={item.id}
                         item={item}
-                        selection={selection}
                         count={doItem.reduce((s, l) => s + l.quantity, 0)}
                         variantKeys={doItem.map((line) => line.key)}
-                        expanded={customizing === item.id}
-                        onToggle={() =>
-                          setCustomizing(customizing === item.id ? null : item.id)
-                        }
-                        onSelect={(group, valueId) =>
-                          toggleDraft(item, group, valueId)
-                        }
+                        onOpen={() => setCustomizing(item.id)}
                         onAdd={() => add(item)}
                         onQuantity={(key, delta) => changeQuantity(key, delta)}
                       />
@@ -621,6 +654,22 @@ export function Storefront({
             </button>
           </div>
         </div>
+      ) : null}
+
+      {customizingItem ? (
+        <ItemModal
+          item={customizingItem}
+          selection={drafts[customizingItem.id] ?? {}}
+          variantKeys={lines
+            .filter((line) => line.item.id === customizingItem.id)
+            .map((line) => line.key)}
+          success={successId === customizingItem.id}
+          onClose={() => setCustomizing(null)}
+          onSelect={(group, valueId) =>
+            toggleDraft(customizingItem, group, valueId)
+          }
+          onAdd={() => add(customizingItem)}
+        />
       ) : null}
 
       {/*
@@ -670,17 +719,13 @@ export function Storefront({
 
 function ItemCard({
   item,
-  selection,
   count,
   variantKeys,
-  expanded,
-  onToggle,
-  onSelect,
+  onOpen,
   onAdd,
   onQuantity,
 }: {
   item: StoreItem;
-  selection: Record<number, number[]>;
   /** Quantas unidades deste produto estão no carrinho, somando as linhas. */
   count: number;
   /**
@@ -688,34 +733,22 @@ function ItemCard({
    * diferentes (sabores, borda) do mesmo tamanho já no carrinho.
    */
   variantKeys: string[];
-  expanded: boolean;
-  onToggle: () => void;
-  onSelect: (group: OptionGroup, valueId: number) => void;
+  onOpen: () => void;
   onAdd: () => void;
   onQuantity: (key: string, delta: number) => void;
 }) {
   const onSale = item.compare_at_cents > item.price_cents;
   const hasOptions = item.option_groups.length > 0;
-  const missing = missingChoices(item, selection);
-  const pronto = missing.length === 0;
   // Só dá para ajustar quantidade no card quando há uma única linha: com duas
   // ou mais, quem manda é a revisão, linha a linha.
   const unica = variantKeys.length === 1 ? variantKeys[0] : null;
-  // Se a configuração da tela já está no carrinho, este botão soma unidade
-  // numa linha existente em vez de criar outra.
-  const repetindo = variantKeys.includes(lineKey(item.id, selection));
   // Produto de tamanho mostra "a partir de" (o sabor mais barato); os demais
   // mostram o preço cheio.
   const temSabores = flavorGroupOf(item) !== null;
   const precoExibido = fromPriceCents(item);
 
   return (
-    <li
-      className={cn(
-        "overflow-hidden rounded-card border bg-white transition-shadow",
-        expanded ? "border-marca-600 shadow-card" : "border-borda",
-      )}
-    >
+    <li className="overflow-hidden rounded-card border border-borda bg-white shadow-card transition-shadow hover:shadow-card-hover">
       <div className="flex gap-3 p-4">
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-2 text-sm font-bold text-texto-forte">
@@ -755,32 +788,26 @@ function ItemCard({
 
           {/*
             Produto com variação NÃO tem botão "Adicionar" aqui. Escolher
-            Tamanho/Borda/Extras é parte do pedido, não um extra opcional —
+            sabores/borda/extras é parte do pedido, não um extra opcional —
             deixar o botão direto permitia entrar no carrinho incompleto e o
-            cliente só descobria o que faltou na revisão. O caminho é
-            "Personalizar" e, dentro do painel, o botão de adicionar.
+            cliente só descobria o que faltou na revisão. O caminho é o modal
+            de personalização e, dentro dele, o botão de adicionar.
           */}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {hasOptions ? (
               <>
                 <button
                   type="button"
-                  onClick={onToggle}
-                  aria-expanded={expanded}
-                  className={cn(
-                    "min-h-10 rounded-pill px-4 text-xs font-bold transition-colors",
-                    expanded
-                      ? "border border-borda-forte text-texto-suave hover:border-marca-600 hover:text-marca-800"
-                      : "bg-marca-gradient text-white hover:opacity-90",
-                  )}
+                  onClick={onOpen}
+                  className="min-h-10 rounded-pill bg-marca-gradient px-5 text-xs font-bold text-white transition-opacity hover:opacity-90"
                 >
-                  {expanded ? "Fechar" : "Personalizar"}
+                  {temSabores ? "Escolher sabores" : "Personalizar"}
                 </button>
 
-                {/* Duas ou mais configurações deste sabor já no carrinho: um
+                {/* Duas ou mais configurações deste produto já no carrinho: um
                     único botão de quantidade aqui seria ambíguo, porque cada
-                    linha tem um tamanho e uma borda diferentes. A contagem
-                    informa o total e a revisão ajusta linha a linha. */}
+                    linha tem sabores e borda diferentes. A contagem informa o
+                    total e a revisão ajusta linha a linha. */}
                 {variantKeys.length > 1 ? (
                   <span className="rounded-pill bg-marca-100 px-3 py-1.5 text-xs font-bold text-marca-800">
                     {count} no carrinho
@@ -822,14 +849,157 @@ function ItemCard({
           />
         ) : null}
       </div>
+    </li>
+  );
+}
 
-      {expanded && hasOptions ? (
-        <div className="space-y-4 border-t border-borda bg-superficie p-4">
+/**
+ * Modal de personalização do produto — o foco do pedido fica inteiro no item.
+ *
+ * Bottom-sheet que sobe da borda no celular e diálogo centralizado com pop no
+ * desktop (variantes `sm:` trocam a animação). Escape, clique no fundo e o ×
+ * fecham; Tab cicla dentro do painel para o teclado não "vazar" para a página
+ * atrás. Depois de adicionar, o painel mostra o ✓ animado por um instante e
+ * fecha, passando o bastão para o toast acima da barra do carrinho.
+ */
+function ItemModal({
+  item,
+  selection,
+  variantKeys,
+  success,
+  onClose,
+  onSelect,
+  onAdd,
+}: {
+  item: StoreItem;
+  selection: Record<number, number[]>;
+  variantKeys: string[];
+  /** Fase de sucesso: o item já entrou e o painel anima a confirmação. */
+  success: boolean;
+  onClose: () => void;
+  onSelect: (group: OptionGroup, valueId: number) => void;
+  onAdd: () => void;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  // Refs em vez de dependências: `onClose` chega como arrow nova a cada render
+  // do pai, e um effect que roda de novo a cada render roubava o foco e
+  // re-travava o scroll sem parar. A sincronização mora num effect próprio
+  // porque atualizar ref durante o render viola `react-hooks/refs`.
+  const closeRef = useRef(onClose);
+  const successRef = useRef(success);
+  useEffect(() => {
+    closeRef.current = onClose;
+    successRef.current = success;
+  });
+
+  const missing = missingChoices(item, selection);
+  const pronto = missing.length === 0;
+  // Se a configuração da tela já está no carrinho, o botão soma unidade numa
+  // linha existente em vez de criar outra.
+  const repetindo = variantKeys.includes(lineKey(item.id, selection));
+  const temSabores = flavorGroupOf(item) !== null;
+
+  useEffect(() => {
+    const overflowAnterior = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    panelRef.current?.focus();
+
+    function onKeydown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        if (!successRef.current) closeRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      const focaveis = panel.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      if (focaveis.length === 0) return;
+      const primeiro = focaveis[0];
+      const ultimo = focaveis[focaveis.length - 1];
+      if (event.shiftKey && document.activeElement === primeiro) {
+        event.preventDefault();
+        ultimo.focus();
+      } else if (!event.shiftKey && document.activeElement === ultimo) {
+        event.preventDefault();
+        primeiro.focus();
+      }
+    }
+
+    window.addEventListener("keydown", onKeydown);
+    return () => {
+      document.body.style.overflow = overflowAnterior;
+      window.removeEventListener("keydown", onKeydown);
+    };
+  }, []);
+
+  return (
+    <div
+      className="fixed inset-0 z-50"
+      role="dialog"
+      aria-modal="true"
+      aria-label={item.name}
+    >
+      <div
+        className="animate-fundo-entra absolute inset-0 bg-marca-950/60"
+        onClick={() => {
+          if (!success) onClose();
+        }}
+      />
+      <div
+        ref={panelRef}
+        tabIndex={-1}
+        className="animate-modal-sobe absolute inset-x-0 bottom-0 flex max-h-[92vh] flex-col rounded-t-media bg-white shadow-media outline-none sm:inset-0 sm:m-auto sm:h-fit sm:max-h-[85vh] sm:max-w-lg sm:animate-modal-pop sm:rounded-media"
+      >
+        <div className="flex shrink-0 items-start gap-3 border-b border-borda p-4">
+          {item.image_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={item.image_url}
+              alt=""
+              className="h-16 w-16 shrink-0 rounded-logo object-cover"
+            />
+          ) : null}
+          <div className="min-w-0 flex-1">
+            <p className="flex flex-wrap items-center gap-2 text-base font-black text-marca-800">
+              {item.name}
+              {item.is_featured ? (
+                <span className="rounded-pill bg-destaque-500/25 px-2 py-0.5 text-xs font-bold text-marca-800">
+                  destaque
+                </span>
+              ) : null}
+            </p>
+            <p className="mt-1 flex flex-wrap items-baseline gap-2">
+              {temSabores ? (
+                <span className="text-xs font-semibold text-texto-suave">
+                  a partir de
+                </span>
+              ) : null}
+              <span className="text-lg font-black text-marca-800">
+                {formatBRL(fromPriceCents(item))}
+              </span>
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (!success) onClose();
+            }}
+            aria-label="Fechar"
+            disabled={success}
+            className="-mr-1 shrink-0 rounded-pill px-2 py-1 text-2xl leading-none text-texto-tenue hover:text-texto-forte disabled:opacity-40"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="flex-1 space-y-4 overflow-y-auto bg-superficie p-4">
           {item.option_groups.map((group) => {
             const ids = selection[group.id] ?? [];
             const falta = missing.includes(group.name);
-            // No grupo de sabores cada valor mostra o PREÇO CHEIO daquele sabor
-            // (não um acréscimo), e a pizza cobra o mais caro entre os
+            // No grupo de sabores cada valor mostra o PREÇO CHEIO daquele
+            // sabor (não um acréscimo), e a pizza cobra o mais caro entre os
             // escolhidos. Nos demais grupos o valor é um acréscimo (+R$ …).
             const sabores = group.is_flavor_group;
             return (
@@ -901,18 +1071,19 @@ function ItemCard({
               </fieldset>
             );
           })}
+        </div>
 
+        <div className="shrink-0 space-y-2 border-t border-borda bg-white p-4">
           {missing.length > 0 ? (
             <p role="status" className="text-xs font-bold text-erro-700">
               Escolha {missing.join(" e ")} para continuar.
             </p>
           ) : null}
-
           <button
             type="button"
             onClick={onAdd}
             disabled={!pronto}
-            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-pill bg-marca-gradient px-5 text-sm font-bold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex min-h-12 w-full items-center justify-center gap-2 rounded-pill bg-marca-gradient px-5 text-sm font-bold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {repetindo ? "Adicionar mais" : "Adicionar ao carrinho"}
             <span aria-hidden className="font-black">
@@ -920,8 +1091,27 @@ function ItemCard({
             </span>
           </button>
         </div>
-      ) : null}
-    </li>
+
+        {success ? (
+          <div className="absolute inset-0 grid place-items-center rounded-t-media bg-white sm:rounded-media">
+            <div className="flex flex-col items-center gap-1 px-6 text-center">
+              <span className="animate-check-pop grid h-16 w-16 place-items-center rounded-full bg-sucesso-700 text-3xl font-black text-white">
+                ✓
+              </span>
+              <p className="mt-2 text-sm font-black text-texto-forte">
+                Adicionado ao carrinho
+              </p>
+              <p className="max-w-64 truncate text-xs text-texto-suave">
+                {item.name}
+                {chosenNames(item, selection).length > 0
+                  ? ` · ${chosenNames(item, selection).join(" · ")}`
+                  : ""}
+              </p>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
