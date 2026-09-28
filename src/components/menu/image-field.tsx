@@ -73,8 +73,17 @@ export function ImageField({
             className="h-16 w-16 shrink-0 rounded-logo border border-borda object-cover"
           />
           <div className="min-w-0 flex-1">
+            {/*
+              `type="text"` (e não `url`): o banco guarda também caminhos
+              relativos (ex.: imagens do seed, `/grupos/comida.jpg`), que o
+              `<img src>` resolve contra o domínio. Com `type="url"` a
+              validação HTML5 reprovava esse valor e bloqueava o submit do
+              formulário inteiro em silêncio — o "Salvar" do item não fazia
+              nada. `inputMode="url"` mantém o teclado adequado no celular.
+            */}
             <input
-              type="url"
+              type="text"
+              inputMode="url"
               value={value}
               onChange={(event) => setValue(event.target.value)}
               aria-label={`${label} (URL)`}
