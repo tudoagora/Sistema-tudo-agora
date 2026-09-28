@@ -14,15 +14,19 @@ function Logo({ className = "" }: { className?: string }) {
       aria-label={`${siteConfig.name} — página inicial`}
       className={`inline-flex items-center ${className}`}
     >
-      <span
+      {/*
+        Logomarca somente em imagem (`public/marca/logo-sem-fundo.png`, selo
+        circular com fundo removido por `scripts/marca-sem-fundo.ps1`). O
+        `aria-label` do link carrega o nome para leitores de tela, então a
+        imagem é decorativa.
+      */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/marca/logo-sem-fundo.png"
+        alt=""
         aria-hidden="true"
-        className="grid h-10 w-10 place-items-center rounded-logo bg-white text-lg font-black text-marca-800"
-      >
-        TA
-      </span>
-      <span className="text-xl font-black tracking-tight text-white">
-        Tudo<span className="text-destaque-500">Agora</span>
-      </span>
+        className="h-14 w-auto"
+      />
     </Link>
   );
 }

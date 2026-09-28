@@ -14,9 +14,13 @@ export function SiteFooter() {
       <div className="mx-auto w-full max-w-6xl px-4 py-14 lg:px-6">
         <div className="grid gap-10 md:grid-cols-4">
           <div className="md:col-span-2">
-            <p className="text-2xl font-black tracking-tight">
-              Tudo<span className="text-destaque-500">Agora</span>
-            </p>
+            {/* Logomarca somente em imagem — a mesma do cabeçalho. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/marca/logo-sem-fundo.png"
+              alt={siteConfig.name}
+              className="h-20 w-auto"
+            />
             <p className="mt-2 max-w-sm text-sm text-white/70">
               {siteConfig.tagline}. Conectando pessoas a sensações.
             </p>
