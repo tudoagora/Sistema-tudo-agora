@@ -8,16 +8,23 @@ import { HeroSlider, type HeroSlide } from "@/components/home/hero-slider";
 import { LiveSearch } from "@/components/home/search-box";
 import {
   listBusinesses,
+  listCategoryCounts,
   listFeaturedBusinesses,
   listGroups,
+  listSubcategories,
+  type Group,
 } from "@/lib/catalog";
 import { getCurrentCity } from "@/lib/city";
 import { siteConfig } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
-function buildSlides(citySlug: string): HeroSlide[] {
-  return [
+function buildSlides(citySlug: string, groups: Group[]): HeroSlide[] {
+  // O CTA aponta para a página da categoria, então o slug vem do banco —
+  // se alguém renomear a categoria no admin, o banner acompanha.
+  const slugDe = (nome: string) => groups.find((g) => g.name === nome)?.slug;
+
+  const slides: (HeroSlide | null)[] = [
     {
       id: "geral",
       title: "Tudo o que você procura, mais perto de você",
@@ -32,7 +39,7 @@ function buildSlides(citySlug: string): HeroSlide[] {
       title: "Precisa de um serviço?",
       subtitle: "Da oficina ao pedreiro, encontre quem resolve na sua cidade.",
       ctaLabel: "Ver serviços",
-      href: `/cidades/${citySlug}/g/servicos`,
+      href: `/cidades/${citySlug}/g/${slugDe("Serviços") ?? ""}`,
       desktop: "/banners/servicos-desktop.webp",
       mobile: "/banners/servicos-mobile.webp",
     },
@@ -41,32 +48,47 @@ function buildSlides(citySlug: string): HeroSlide[] {
       title: "Suas lojas preferidas",
       subtitle: "Encontre sua loja e fale direto com ela, sem intermediário.",
       ctaLabel: "Ver lojas",
-      href: `/cidades/${citySlug}/g/lojas`,
+      href: `/cidades/${citySlug}/g/${slugDe("Lojas") ?? ""}`,
       desktop: "/banners/lojas-desktop.webp",
       mobile: "/banners/lojas-mobile.webp",
     },
   ];
+
+  return slides.filter(
+    (slide): slide is HeroSlide => slide !== null && !slide.href.endsWith("/g/"),
+  );
 }
 
 export default async function HomePage(props: PageProps<"/">) {
   const searchParams = await props.searchParams;
-  const groupParam =
+  const grupoParam =
     typeof searchParams.grupo === "string" ? searchParams.grupo : null;
-  const activeGroup = groupParam && groupParam !== "todas" ? groupParam : null;
+  const categoriaParam =
+    typeof searchParams.categoria === "string" ? searchParams.categoria : null;
 
-  const [city, groups] = await Promise.all([getCurrentCity(), listGroups()]);
+  const [city, groups, subcategories] = await Promise.all([
+    getCurrentCity(),
+    listGroups(),
+    listSubcategories(),
+  ]);
 
-  // Uma listagem por grupo alimenta tanto o filtro quanto a contagem dos cards.
-  const perGroup = await Promise.all(
-    groups.map((group) => listBusinesses(city.id, [group.slug])),
-  );
-  const counts: Record<string, number> = Object.fromEntries(
-    groups.map((group, i) => [group.slug, perGroup[i].length]),
-  );
-  counts.todas = (await listBusinesses(city.id)).length;
+  // A URL pode chegar com slugs antigos (o filtro é o único que escreve
+  // `?grupo=`), então resolvemos contra a árvore em vez de confiar no texto.
+  const activeGroup = groups.find((g) => g.slug === grupoParam)?.slug ?? null;
+  const activeCategory =
+    activeGroup && subcategories.some((c) => c.slug === categoriaParam)
+      ? categoriaParam
+      : null;
+
+  // Uma ida ao banco alimenta os números dos dois níveis do filtro.
+  const counts = await listCategoryCounts(city.id);
 
   const [businesses, featured] = await Promise.all([
-    listBusinesses(city.id, activeGroup ? [activeGroup] : null),
+    listBusinesses(
+      city.id,
+      activeGroup ? [activeGroup] : null,
+      { categorySlugs: activeCategory ? [activeCategory] : null },
+    ),
     listFeaturedBusinesses(city.id, 4),
   ]);
 
@@ -77,7 +99,7 @@ export default async function HomePage(props: PageProps<"/">) {
       </h1>
 
       <div className="mx-auto w-full max-w-6xl px-4 pt-5 lg:px-6">
-        <HeroSlider slides={buildSlides(city.slug)} />
+        <HeroSlider slides={buildSlides(city.slug, groups)} />
       </div>
 
       <section
@@ -97,7 +119,7 @@ export default async function HomePage(props: PageProps<"/">) {
         </div>
       </section>
 
-      <CategoryGrid groups={groups} citySlug={city.slug} counts={counts} />
+      <CategoryGrid groups={groups} citySlug={city.slug} counts={counts.groups} />
 
       <section
         id="descubra"
@@ -115,10 +137,11 @@ export default async function HomePage(props: PageProps<"/">) {
         </p>
 
         <div className="mt-6">
-          <Suspense fallback={<div className="h-11" />}>
+          <Suspense fallback={<div className="h-[6.5rem]" />}>
             <GroupFilter
-              groups={groups.map((g) => ({ slug: g.slug, name: g.name }))}
-              counts={counts}
+              groups={groups}
+              subcategories={subcategories}
+              counts={{ groups: counts.groups, categories: counts.categories }}
             />
           </Suspense>
         </div>

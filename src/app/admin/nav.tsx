@@ -7,6 +7,7 @@ const links = [
   { href: "/admin", label: "Visão geral" },
   { href: "/admin/empresas", label: "Empresas" },
   { href: "/admin/cidades", label: "Cidades" },
+  { href: "/admin/categorias", label: "Categorias" },
   { href: "/admin/planos", label: "Planos" },
   { href: "/admin/ofertas", label: "Ofertas" },
 ] as const;

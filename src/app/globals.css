@@ -76,6 +76,12 @@
   --animate-fundo-entra: fundo-entra 200ms ease-out;
   --animate-modal-sobe: modal-sobe 320ms cubic-bezier(0.22, 1, 0.36, 1);
   --animate-modal-pop: modal-pop 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  /* Troca de painel do filtro de categorias (categorias principais ->
+     subcategorias). 220ms entra / 160ms sai: somados dão ~380ms de
+     sobreposição, o suficiente para ler a troca sem atrasar o clique. */
+  --animate-filtro-entra: filtro-entra 220ms cubic-bezier(0.22, 1, 0.36, 1)
+    both;
+  --animate-filtro-sai: filtro-sai 160ms cubic-bezier(0.4, 0, 1, 1) both;
 }
 
 @keyframes aviso-entra {
@@ -139,6 +145,29 @@
   to {
     opacity: 1;
     transform: scale(1) translateY(0);
+  }
+}
+
+/* Painel que entra no lugar do outro: sobe 6px enquanto aparece. */
+@keyframes filtro-entra {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Painel que sai: fica no lugar (position absolute) e só apaga, sem
+   deslizar — sair mais rápido que entrar evita a sensação de "atraso". */
+@keyframes filtro-sai {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
   }
 }
 

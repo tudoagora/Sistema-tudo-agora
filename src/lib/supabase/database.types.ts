@@ -89,20 +89,20 @@ isOneToOne: false
                   ]
                 },"categories": {
                   Row: {
-                    "group_id": number | null,"id": number,"is_active": boolean,"is_order_capable": boolean,"name": string,"slug": string,"sort_order": number
+                    "id": number,"image_url": string | null,"is_active": boolean,"is_order_capable": boolean,"name": string,"parent_id": number | null,"slug": string,"sort_order": number
                   }
                   Insert: {
-                    "group_id"?: number | null,"id"?: number,"is_active"?: boolean,"is_order_capable"?: boolean,"name": string,"slug": string,"sort_order"?: number
+                    "id"?: number,"image_url"?: string | null,"is_active"?: boolean,"is_order_capable"?: boolean,"name": string,"parent_id"?: number | null,"slug": string,"sort_order"?: number
                   }
                   Update: {
-                    "group_id"?: number | null,"id"?: number,"is_active"?: boolean,"is_order_capable"?: boolean,"name"?: string,"slug"?: string,"sort_order"?: number
+                    "id"?: number,"image_url"?: string | null,"is_active"?: boolean,"is_order_capable"?: boolean,"name"?: string,"parent_id"?: number | null,"slug"?: string,"sort_order"?: number
                   }
                   Relationships: [
                     {
-      foreignKeyName: "categories_group_id_fkey"
-      columns: ["group_id"]
+      foreignKeyName: "categories_parent_id_fkey"
+      columns: ["parent_id"]
 isOneToOne: false
-      referencedRelation: "groups"
+      referencedRelation: "categories"
       referencedColumns: ["id"]
     }
                   ]
@@ -137,19 +137,6 @@ isOneToOne: false
       referencedRelation: "businesses"
       referencedColumns: ["id"]
     }
-                  ]
-                },"groups": {
-                  Row: {
-                    "id": number,"image_url": string | null,"is_active": boolean,"name": string,"slug": string,"sort_order": number
-                  }
-                  Insert: {
-                    "id"?: number,"image_url"?: string | null,"is_active"?: boolean,"name": string,"slug": string,"sort_order"?: number
-                  }
-                  Update: {
-                    "id"?: number,"image_url"?: string | null,"is_active"?: boolean,"name"?: string,"slug"?: string,"sort_order"?: number
-                  }
-                  Relationships: [
-                    
                   ]
                 },"menu_categories": {
                   Row: {
@@ -425,12 +412,15 @@ isOneToOne: false
 "is_admin":
 { Args: Record<PropertyKey, never>; Returns: boolean
                            },
-"list_businesses":
-{ Args: { "p_city_id": number,"p_group_slugs"?: (string)[],"p_limit"?: number,"p_offset"?: number }; Returns: {
+            "list_businesses":
+{ Args: { "p_category_slugs"?: (string)[],"p_city_id": number,"p_group_slugs"?: (string)[],"p_limit"?: number,"p_offset"?: number }; Returns: {
               "custom_slug": string,"description": string,"groups": (string)[],"id": number,"logo_url": string,"name": string,"slug": string
             }[]
                            },
-"manages_business":
+            "list_category_counts":
+{ Args: { "p_city_id": number }; Returns: Json
+                           },
+            "manages_business":
 { Args: { "p_business_id": number }; Returns: boolean
                            },
 "manages_product":

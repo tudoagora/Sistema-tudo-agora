@@ -11,6 +11,33 @@ import { deleteBusiness, publishBusiness, setBusinessCategory } from "../actions
 
 export const metadata: Metadata = { title: "Editar empresa" };
 
+/** Uma linha da lista de categorias da empresa: principal ou subcategoria. */
+function CategoriaCheckbox({
+  businessId,
+  category,
+  marcado,
+}: {
+  businessId: number;
+  category: { id: number; name: string };
+  marcado: boolean;
+}) {
+  return (
+    <form action={setBusinessCategory} className="flex items-center gap-2">
+      <input type="hidden" name="businessId" value={businessId} />
+      <input type="hidden" name="categoryId" value={category.id} />
+      <label className="flex min-h-9 w-full cursor-pointer items-center gap-2 rounded-logo px-2 text-sm text-texto-forte transition-colors hover:bg-superficie">
+        <input
+          type="checkbox"
+          name="active"
+          defaultChecked={marcado}
+          className="h-4 w-4 accent-marca-800"
+        />
+        {category.name}
+      </label>
+    </form>
+  );
+}
+
 export default async function EditBusinessPage(props: PageProps<"/admin/empresas/[id]">) {
   await requireAdmin();
   const { id } = await props.params;
@@ -38,6 +65,12 @@ export default async function EditBusinessPage(props: PageProps<"/admin/empresas
   const cityValue = Array.isArray(business.cities) ? business.cities[0] : business.cities;
   const citySlug = cityValue ? String(cityValue.slug) : (cities[0]?.slug ?? "");
 
+  // A lista vem plana do banco; a tela desenha a árvore para o admin enxergar
+  // em qual principal está marcando.
+  const raizes = categories.filter((category) => category.parentId == null);
+  const filhasDe = (id: number) =>
+    categories.filter((category) => category.parentId === id);
+
   return (
     <div>
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -50,7 +83,7 @@ export default async function EditBusinessPage(props: PageProps<"/admin/empresas
               href={`/cidades/${citySlug}/empresa/${business.slug}`}
               className="font-semibold text-marca-600 underline"
             >
-              Ver a pÃ¡gina pÃºblica
+              Ver a página pública
             </Link>
           </p>
         </div>
@@ -102,46 +135,51 @@ export default async function EditBusinessPage(props: PageProps<"/admin/empresas
           <section className="rounded-card border border-borda bg-white p-5">
             <h2 className="text-sm font-black text-marca-800">Categorias</h2>
             <p className="mt-1 text-xs text-texto-tenue">
-              Onde a empresa aparece na home e no diretÃ³rio.
+              Onde a empresa aparece na home e no diretório.
             </p>
             <ul className="mt-4 space-y-1.5">
-              {categories.map((category) => (
-                <li key={category.id}>
-                  <form action={setBusinessCategory} className="flex items-center gap-2">
-                    <input type="hidden" name="businessId" value={business.id} />
-                    <input type="hidden" name="categoryId" value={category.id} />
-                    <label className="flex min-h-9 w-full cursor-pointer items-center gap-2 rounded-logo px-2 text-sm text-texto-forte transition-colors hover:bg-superficie">
-                      <input
-                        type="checkbox"
-                        name="active"
-                        defaultChecked={linked.has(category.id)}
-                        className="h-4 w-4 accent-marca-800"
+              {raizes.map((raiz) => (
+                <li key={raiz.id}>
+                  <ul className="space-y-1.5">
+                    <li>
+                      <CategoriaCheckbox
+                        businessId={business.id}
+                        category={raiz}
+                        marcado={linked.has(raiz.id)}
                       />
-                      {category.name}
-                    </label>
-                  </form>
+                    </li>
+                    {filhasDe(raiz.id).map((filha) => (
+                      <li key={filha.id} className="pl-5">
+                        <CategoriaCheckbox
+                          businessId={business.id}
+                          category={filha}
+                          marcado={linked.has(filha.id)}
+                        />
+                      </li>
+                    ))}
+                  </ul>
                 </li>
               ))}
             </ul>
           </section>
 
           <section className="rounded-card border border-borda bg-white p-5">
-            <h2 className="text-sm font-black text-marca-800">CardÃ¡pio</h2>
+            <h2 className="text-sm font-black text-marca-800">Cardápio</h2>
             <p className="mt-1 text-xs text-texto-tenue">
-              SeÃ§Ãµes, itens e grupos de opÃ§Ã£o (borda, sabor, tamanho).
+              Seções, itens e grupos de opção (borda, sabor, tamanho).
             </p>
             <Link
               href={`/admin/empresas/${business.id}/cardapio`}
               className="mt-4 inline-flex min-h-11 w-full items-center justify-center rounded-pill bg-marca-800 px-5 text-sm font-bold text-white"
             >
-              Gerenciar cardÃ¡pio
+              Gerenciar cardápio
             </Link>
           </section>
 
           <section className="rounded-card border border-erro/25 bg-erro/5 p-5">
             <h2 className="text-sm font-black text-erro-700">Excluir</h2>
             <p className="mt-1 text-xs text-texto-suave">
-              Apaga a empresa, o cardÃ¡pio e as categorias. NÃ£o dÃ¡ para desfazer.
+              Apaga a empresa, o cardápio e as categorias. Não dá para desfazer.
             </p>
             <form action={deleteBusiness} className="mt-4">
               <input type="hidden" name="id" value={business.id} />

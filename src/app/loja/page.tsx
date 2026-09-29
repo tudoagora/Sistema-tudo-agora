@@ -5,7 +5,12 @@ import { Suspense } from "react";
 import { BusinessCard } from "@/components/business-card";
 import { GroupFilter } from "@/components/home/group-filter";
 import { getCurrentCity } from "@/lib/city";
-import { listBusinesses, listGroups } from "@/lib/catalog";
+import {
+  listBusinesses,
+  listCategoryCounts,
+  listGroups,
+  listSubcategories,
+} from "@/lib/catalog";
 
 export const metadata: Metadata = {
   title: "Lojas e serviços",
@@ -19,29 +24,40 @@ const PER_PAGE = 24;
 export default async function StorePage(props: PageProps<"/loja">) {
   const params = await props.searchParams;
   const groupParam = typeof params.grupo === "string" ? params.grupo : null;
+  const categoryParam =
+    typeof params.categoria === "string" ? params.categoria : null;
   const page = Math.max(1, Number(params.pagina) || 1);
 
   const city = await getCurrentCity();
-  const [groups, businesses] = await Promise.all([
+  const [groups, subcategories, counts] = await Promise.all([
     listGroups(),
-    listBusinesses(
-      city.id,
-      groupParam ? [groupParam] : null,
-      { limit: PER_PAGE, offset: (page - 1) * PER_PAGE },
-    ),
+    listSubcategories(),
+    listCategoryCounts(city.id),
   ]);
 
-  const counts: Record<string, number> = {};
-  const [all, ...perGroup] = await Promise.all([
-    listBusinesses(city.id, null, { limit: 1000 }),
-    ...groups.map((g) => listBusinesses(city.id, [g.slug], { limit: 1000 })),
-  ]);
-  counts["todas"] = all.length;
-  groups.forEach((group, index) => {
-    counts[group.slug] = perGroup[index]?.length ?? 0;
-  });
+  // Resolvemos contra a árvore: query string antiga não pode virar 404 nem
+  // página vazia.
+  const activeGroup = groups.find((g) => g.slug === groupParam)?.slug ?? null;
+  const activeCategory =
+    activeGroup && subcategories.some((c) => c.slug === categoryParam)
+      ? categoryParam
+      : null;
 
-  const total = groupParam ? (counts[groupParam] ?? 0) : counts["todas"];
+  const businesses = await listBusinesses(
+    city.id,
+    activeGroup ? [activeGroup] : null,
+    {
+      categorySlugs: activeCategory ? [activeCategory] : null,
+      limit: PER_PAGE,
+      offset: (page - 1) * PER_PAGE,
+    },
+  );
+
+  const total = activeCategory
+    ? (counts.categories[activeCategory] ?? 0)
+    : activeGroup
+      ? (counts.groups[activeGroup] ?? 0)
+      : counts.total;
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
 
   return (
@@ -53,24 +69,13 @@ export default async function StorePage(props: PageProps<"/loja">) {
         {total} {total === 1 ? "empresa cadastrada" : "empresas cadastradas"}.
       </p>
 
-      <nav aria-label="Categorias" className="mt-6">
-        <ul className="flex flex-wrap gap-2">
-          {groups.map((group) => (
-            <li key={group.slug}>
-              <Link
-                href={`/cidades/${city.slug}/g/${group.slug}`}
-                className="inline-flex min-h-11 items-center rounded-pill bg-superficie-2 px-4 text-sm font-semibold text-texto-suave transition-colors hover:bg-marca-100 hover:text-marca-800"
-              >
-                {group.name}
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </nav>
-
       <div className="mt-8">
         <Suspense fallback={null}>
-          <GroupFilter groups={groups} counts={counts} />
+          <GroupFilter
+            groups={groups}
+            subcategories={subcategories}
+            counts={{ groups: counts.groups, categories: counts.categories }}
+          />
         </Suspense>
       </div>
 
@@ -96,7 +101,8 @@ export default async function StorePage(props: PageProps<"/loja">) {
           {Array.from({ length: totalPages }, (_, index) => index + 1).map(
             (n) => {
               const search = new URLSearchParams();
-              if (groupParam) search.set("grupo", groupParam);
+              if (activeGroup) search.set("grupo", activeGroup);
+              if (activeCategory) search.set("categoria", activeCategory);
               if (n > 1) search.set("pagina", String(n));
               const query = search.toString();
               return (

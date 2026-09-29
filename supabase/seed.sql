@@ -15,70 +15,72 @@ on conflict (id) do nothing;
 
 select setval(pg_get_serial_sequence('public.cities', 'id'), 1, true);
 
--- ---------- GRUPOS DA HOME (as 9 pílulas) ----------
+-- ---------- CATEGORIAS (árvore de 2 níveis, auto-referente) ----------
+--
+-- `parent_id is null` = categoria principal (as 9 pílulas da home).
+-- `parent_id` preenchido = subcategoria (o antigo `categories.group_id`).
+-- Os ids 34-42 são as antigas `groups`; os ids 1-33 são as subcategorias e
+-- mantêm o id original para que os `business_categories` abaixo continuem
+-- válidos. Onde o slug da subcategoria colidia com o da principal, a
+-- subcategoria recebe um slug próprio (o da principal vence, porque
+-- `/g/<slug>` é URL pública).
 
-insert into public.groups (id, name, slug, image_url, sort_order) values
-  (1, 'Comida',                       'comida',   '/grupos/comida.jpg',   1),
-  (2, 'Sorvetes, Açaí e Sobremesas',  'sorvetes', '/grupos/sorvetes.jpg', 2),
-  (3, 'Conveniência',                 'bebida',   '/grupos/bebida.jpg',   3),
-  (4, 'Farmácias, saúde e beleza',    'farmacia', '/grupos/farmacia.jpg', 4),
-  (5, 'Serviços',                     'servicos', '/grupos/servicos.jpg', 5),
-  (6, 'Lojas',                        'lojas',    '/grupos/lojas.jpg',    6),
-  (7, 'Corridas',                     'corridas', '/grupos/corridas.jpg', 7),
-  (8, 'Úteis',                        'uteis',    '/grupos/uteis.jpg',    8),
-  (9, 'Mídia',                        'midia',    '/grupos/midia.jpg',    9)
-on conflict (id) do nothing;
-
-select setval(pg_get_serial_sequence('public.groups', 'id'), 9, true);
-
--- ---------- CATEGORIAS ----------
-
-insert into public.categories (id, name, slug, group_id, is_order_capable, sort_order) values
+insert into public.categories (id, name, slug, parent_id, image_url, is_order_capable, sort_order) values
   -- comida
-  (1,  'Pizzas',                      'pizzas',                 1, true,  1),
-  (2,  'Lanchonetes',                 'lanchonetes',            1, true,  2),
-  (3,  'Hambúrguer',                  'hamburguer',             1, true,  3),
-  (4,  'Restaurantes',                'restaurantes',           1, true,  4),
-  (5,  'Comida japonesa',             'comida-japonesa',        1, true,  5),
-  (6,  'Churrascaria',                'churrascaria',           1, true,  6),
-  (7,  'Pães e doces',                'paes-e-doces',           1, true,  7),
+  (1,  'Pizzas',                      'pizzas',                    34, null, true,  1),
+  (2,  'Lanchonetes',                 'lanchonetes',               34, null, true,  2),
+  (3,  'Hambúrguer',                  'hamburguer',                34, null, true,  3),
+  (4,  'Restaurantes',                'restaurantes',              34, null, true,  4),
+  (5,  'Comida japonesa',             'comida-japonesa',           34, null, true,  5),
+  (6,  'Churrascaria',                'churrascaria',              34, null, true,  6),
+  (7,  'Pães e doces',                'paes-e-doces',              34, null, true,  7),
   -- sorvetes
-  (8,  'Sorvetes, açaí e sobremesas', 'sorvetes-acai-sobremesas', 2, true, 1),
+  (8,  'Sorvetes, açaí e sobremesas', 'sorvetes-acai-sobremesas',  35, null, true,  1),
   -- bebida
-  (9,  'Conveniência',                'conveniencia',           3, true,  1),
-  (10, 'Bebidas',                     'bebidas',                3, true,  2),
+  (9,  'Conveniência',                'conveniencia',              36, null, true,  1),
+  (10, 'Bebidas',                     'bebidas',                   36, null, true,  2),
   -- farmacia
-  (11, 'Farmácias',                   'farmacias',              4, true,  1),
-  (12, 'Saúde e beleza',              'saude-e-beleza',         4, true,  2),
-  (13, 'Academias',                   'academias',              4, true,  3),
+  (11, 'Farmácias',                   'farmacias',                 37, null, true,  1),
+  (12, 'Saúde e beleza',              'saude-e-beleza',            37, null, true,  2),
+  (13, 'Academias',                   'academias',                 37, null, true,  3),
   -- servicos
-  (14, 'Serviços em geral',           'servicos',               5, false, 1),
-  (15, 'Automotivo',                  'automotivo',             5, false, 2),
-  (16, 'Construção e engenharia',     'construcao-engenharia',  5, false, 3),
-  (17, 'Educação',                    'educacao',               5, false, 4),
-  (18, 'Eletrônica e repair',         'eletronica-repair',      5, false, 5),
-  (19, 'Hospedagem',                  'hospedagem',             5, false, 6),
-  (20, 'Odontologia',                 'odontologia',            5, false, 7),
-  (21, 'Salão e beleza',              'salao-e-beleza',         5, false, 8),
+  (14, 'Serviços em geral',           'servicos-em-geral',         38, null, false, 1),
+  (15, 'Automotivo',                  'automotivo',                38, null, false, 2),
+  (16, 'Construção e engenharia',     'construcao-engenharia',     38, null, false, 3),
+  (17, 'Educação',                    'educacao',                  38, null, false, 4),
+  (18, 'Eletrônica e repair',         'eletronica-repair',         38, null, false, 5),
+  (19, 'Hospedagem',                  'hospedagem',                38, null, false, 6),
+  (20, 'Odontologia',                 'odontologia',               38, null, false, 7),
+  (21, 'Salão e beleza',              'salao-e-beleza',            38, null, false, 8),
   -- lojas
-  (22, 'Lojas',                       'lojas',                  6, true,  1),
-  (23, 'Moda e acessórios',           'moda-e-acessorios',      6, true,  2),
-  (24, 'Casa e construção',           'casa-e-construcao',      6, true,  3),
-  (25, 'Perfumaria',                  'perfumaria',             6, true,  4),
-  (26, 'Alimentos',                   'alimentos',              6, true,  5),
-  (27, 'Limpeza e higiene',            'limpeza-e-higiene',      6, true,  6),
-  (28, 'Óptica e relógios',            'optica-e-relogios',      6, true,  7),
-  (29, 'Floricultura',                'floricultura',           6, true,  8),
+  (22, 'Lojas',                       'lojas-gerais',              39, null, true,  1),
+  (23, 'Moda e acessórios',           'moda-e-acessorios',         39, null, true,  2),
+  (24, 'Casa e construção',           'casa-e-construcao',         39, null, true,  3),
+  (25, 'Perfumaria',                  'perfumaria',                39, null, true,  4),
+  (26, 'Alimentos',                   'alimentos',                 39, null, true,  5),
+  (27, 'Limpeza e higiene',            'limpeza-e-higiene',         39, null, true,  6),
+  (28, 'Óptica e relógios',            'optica-e-relogios',         39, null, true,  7),
+  (29, 'Floricultura',                'floricultura',              39, null, true,  8),
   -- corridas
-  (30, 'Corridas e táxis',            'corridas',               7, true,  1),
+  (30, 'Corridas e táxis',            'corridas-e-taxis',          40, null, true,  1),
   -- uteis
-  (31, 'Telefones úteis',             'telefones-uteis',        8, false, 1),
-  (32, 'Serviços públicos',           'servicos-publicos',      8, false, 2),
+  (31, 'Telefones úteis',             'telefones-uteis',           41, null, false, 1),
+  (32, 'Serviços públicos',           'servicos-publicos',         41, null, false, 2),
   -- midia
-  (33, 'Mídia eAssessoria',           'midia',                  9, false, 1)
+  (33, 'Mídia e Assessoria',          'midia-e-assessoria',        42, null, false, 1),
+  -- categorias principais (antes `groups`)
+  (34, 'Comida',                      'comida',   null, '/grupos/comida.jpg',   false, 1),
+  (35, 'Sorvetes, Açaí e Sobremesas', 'sorvetes', null, '/grupos/sorvetes.jpg', false, 2),
+  (36, 'Conveniência',                'bebida',   null, '/grupos/bebida.jpg',   false, 3),
+  (37, 'Farmácias, saúde e beleza',   'farmacia', null, '/grupos/farmacia.jpg', false, 4),
+  (38, 'Serviços',                    'servicos', null, '/grupos/servicos.jpg', false, 5),
+  (39, 'Lojas',                       'lojas',    null, '/grupos/lojas.jpg',    false, 6),
+  (40, 'Corridas',                    'corridas', null, '/grupos/corridas.jpg', false, 7),
+  (41, 'Úteis',                       'uteis',    null, '/grupos/uteis.jpg',    false, 8),
+  (42, 'Mídia',                       'midia',    null, '/grupos/midia.jpg',    false, 9)
 on conflict (id) do nothing;
 
-select setval(pg_get_serial_sequence('public.categories', 'id'), 33, true);
+select setval(pg_get_serial_sequence('public.categories', 'id'), 42, true);
 
 -- ---------- EMPRESAS (53) ----------
 
@@ -247,7 +249,7 @@ on conflict do nothing;
 
 insert into public.business_categories (business_id, category_id, is_primary)
 select b.id, c.id, true from public.businesses b, public.categories c
-where b.legacy_wp_id in (2134, 2147, 2149, 2066) and c.slug = 'servicos'
+where b.legacy_wp_id in (2134, 2147, 2149, 2066) and c.slug = 'servicos-em-geral'
 on conflict do nothing;
 
 insert into public.business_categories (business_id, category_id, is_primary)
@@ -257,7 +259,7 @@ on conflict do nothing;
 
 insert into public.business_categories (business_id, category_id, is_primary)
 select b.id, c.id, true from public.businesses b, public.categories c
-where b.legacy_wp_id in (2128, 2124, 2136, 2126) and c.slug = 'midia'
+where b.legacy_wp_id in (2128, 2124, 2136, 2126) and c.slug = 'midia-e-assessoria'
 on conflict do nothing;
 
 insert into public.business_categories (business_id, category_id, is_primary)
@@ -267,13 +269,13 @@ on conflict do nothing;
 
 insert into public.business_categories (business_id, category_id, is_primary)
 select b.id, c.id, true from public.businesses b, public.categories c
-where b.legacy_wp_id = 2064 and c.slug = 'corridas'
+where b.legacy_wp_id = 2064 and c.slug = 'corridas-e-taxis'
 on conflict do nothing;
 
 -- serviços (17) — todos no grupo serviços
 insert into public.business_categories (business_id, category_id, is_primary)
 select b.id, c.id, true from public.businesses b, public.categories c
-where b.source = 'servicos' and c.slug = 'servicos'
+where b.source = 'servicos' and c.slug = 'servicos-em-geral'
 on conflict do nothing;
 
 update public.business_categories bc set is_primary = false
@@ -318,7 +320,7 @@ on conflict do nothing;
 -- lojas (10)
 insert into public.business_categories (business_id, category_id, is_primary)
 select b.id, c.id, true from public.businesses b, public.categories c
-where b.source = 'lojas' and c.slug = 'lojas'
+where b.source = 'lojas' and c.slug = 'lojas-gerais'
 on conflict do nothing;
 
 update public.business_categories bc set is_primary = false

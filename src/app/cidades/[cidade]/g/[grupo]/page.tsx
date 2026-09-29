@@ -1,22 +1,23 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { BusinessCard } from "@/components/business-card";
 import {
   getCategoryBySlug,
   getCityBySlug,
-  getGroupBySlug,
   listBusinesses,
-  listBusinessesByCategory,
+  listSubcategories,
 } from "@/lib/catalog";
 
-/** A rota aceita o slug do grupo ("comida") ou o da categoria ("pizzas"). */
-async function resolveScope(slug: string) {
-  const group = await getGroupBySlug(slug);
-  if (group) return { kind: "group" as const, group, category: null };
-  const category = await getCategoryBySlug(slug);
-  if (category) return { kind: "category" as const, group: null, category };
-  return null;
+/**
+ * A rota resolve o slug na árvore inteira — a principal ("comida") ou uma
+ * subcategoria ("pizzas"). O RPC já consideram as duas coisas ao filtrar
+ * (`coalesce(pai, categoria)` no grupo e o slug exato na subcategoria), então
+ * um único `listBusinesses` cobre os dois casos.
+ */
+async function listScopeBusinesses(cityId: number, slug: string) {
+  return listBusinesses(cityId, [slug], { categorySlugs: [slug] });
 }
 
 export async function generateMetadata(
@@ -25,14 +26,13 @@ export async function generateMetadata(
   const { cidade, grupo } = await props.params;
   const [city, scope] = await Promise.all([
     getCityBySlug(cidade),
-    resolveScope(grupo),
+    getCategoryBySlug(grupo),
   ]);
   if (!city || !scope) return { title: "Página não encontrada" };
 
-  const label = scope.group?.name ?? scope.category?.name;
   return {
-    title: `${label} em ${city.name} - ${city.state}`,
-    description: `Empresas de ${label} em ${city.name} - ${city.state}.`,
+    title: `${scope.name} em ${city.name} - ${city.state}`,
+    description: `Empresas de ${scope.name} em ${city.name} - ${city.state}.`,
     alternates: { canonical: `/cidades/${city.slug}/g/${grupo}` },
   };
 }
@@ -43,29 +43,45 @@ export default async function GroupPage(
   const { cidade, grupo } = await props.params;
   const [city, scope] = await Promise.all([
     getCityBySlug(cidade),
-    resolveScope(grupo),
+    getCategoryBySlug(grupo),
   ]);
   if (!city || !scope) notFound();
 
-  const label = scope.group?.name ?? scope.category?.name ?? grupo;
-  const businesses =
-    scope.kind === "group"
-      ? await listBusinesses(city.id, [scope.group!.slug])
-      : await listBusinessesByCategory(scope.category!.id, city.id);
+  const [businesses, filhas] = await Promise.all([
+    listScopeBusinesses(city.id, scope.slug),
+    scope.parentId ? listSubcategories(scope.parentId) : Promise.resolve([]),
+  ]);
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-12 lg:px-6">
       <h1 className="text-3xl font-black tracking-tight text-marca-800 sm:text-4xl">
-        {label} em {city.name}
+        {scope.name} em {city.name}
       </h1>
       <p className="mt-2 text-texto-suave">
         {businesses.length}{" "}
         {businesses.length === 1 ? "empresa encontrada" : "empresas encontradas"}.
       </p>
 
+      {filhas.length > 0 ? (
+        <nav aria-label="Subcategorias" className="mt-6">
+          <ul className="flex flex-wrap gap-2">
+            {filhas.map((filha) => (
+              <li key={filha.slug}>
+                <Link
+                  href={`/cidades/${city.slug}/g/${filha.slug}`}
+                  className="inline-flex min-h-11 items-center rounded-pill bg-superficie-2 px-4 text-sm font-semibold text-texto-suave transition-colors hover:bg-marca-100 hover:text-marca-800"
+                >
+                  {filha.name}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      ) : null}
+
       {businesses.length === 0 ? (
         <p className="mt-10 rounded-card border border-dashed border-borda-forte bg-superficie p-10 text-center text-texto-suave">
-          Nenhuma empresa em {label} aqui em {city.name} ainda.
+          Nenhuma empresa em {scope.name} aqui em {city.name} ainda.
         </p>
       ) : (
         <ul className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

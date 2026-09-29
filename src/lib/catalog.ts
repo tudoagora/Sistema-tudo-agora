@@ -16,6 +16,7 @@ export type City = {
   timezone: string;
 };
 
+/** Categoria principal (as pílulas da home) — raiz da árvore, `parent_id is null`. */
 export type Group = {
   id: number;
   name: string;
@@ -28,7 +29,8 @@ export type Category = {
   id: number;
   name: string;
   slug: string;
-  groupId: number | null;
+  parentId: number | null;
+  imageUrl: string | null;
   isOrderCapable: boolean;
   sortOrder: number;
   businessCount: number;
@@ -195,17 +197,25 @@ export const searchBusinesses = cache(
 /**
  * Listagem da seção "Descubra empresas". Sem `slugs` devolve tudo da
  * cidade; com `slugs` filtra por qualquer um dos grupos (multi-label).
+ * `opts.categorySlugs` filtra por subcategoria (ou pela própria principal).
  */
 export const listBusinesses = cache(
   async (
     cityId: number,
     slugs?: string[] | null,
-    opts: { limit?: number; offset?: number } = {},
+    opts: {
+      limit?: number;
+      offset?: number;
+      categorySlugs?: string[] | null;
+    } = {},
   ): Promise<BusinessCard[]> => {
     const supabase = await createClient();
     const { data, error } = await supabase.rpc("list_businesses", {
       p_city_id: cityId,
       ...(slugs && slugs.length > 0 ? { p_group_slugs: slugs } : {}),
+      ...(opts.categorySlugs && opts.categorySlugs.length > 0
+        ? { p_category_slugs: opts.categorySlugs }
+        : {}),
       ...(opts.limit ? { p_limit: opts.limit } : {}),
       p_offset: opts.offset ?? 0,
     });
@@ -254,7 +264,7 @@ export const getBusinessBySlug = cache(
          cities!inner(slug, name),
          business_categories(
            is_primary,
-           categories!inner(name, slug, groups!inner(slug))
+           categories!inner(name, slug, parent:categories(slug))
          )`,
       )
       .eq("slug", slug)
@@ -279,7 +289,7 @@ export const getBusinessBySlug = cache(
       const cat = unwrap<{
         name: string;
         slug: string;
-        groups: unknown;
+        parent: unknown;
       }>(link.categories);
       if (!cat) continue;
       categories.push({
@@ -287,8 +297,8 @@ export const getBusinessBySlug = cache(
         slug: cat.slug,
         isPrimary: link.is_primary,
       });
-      const groups = unwrapAll<{ slug: string }>(cat.groups);
-      for (const group of groups) groupSlugs.add(group.slug);
+      // empresa marcada numa subcategoria também conta para a principal
+      groupSlugs.add(unwrap<{ slug: string }>(cat.parent)?.slug ?? cat.slug);
     }
     categories.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
 
@@ -423,11 +433,13 @@ export const getCityBySlug = cache(
   },
 );
 
+/** Categorias principais (raiz da árvore) — as pílulas da home. */
 export const listGroups = cache(async (): Promise<Group[]> => {
   const supabase = await createClient();
   const { data, error } = await supabase
-    .from("groups")
+    .from("categories")
     .select("id, name, slug, image_url, sort_order")
+    .is("parent_id", null)
     .eq("is_active", true)
     .order("sort_order");
   if (error) throw new Error(`listGroups: ${error.message}`);
@@ -441,74 +453,106 @@ export const listGroups = cache(async (): Promise<Group[]> => {
   }));
 });
 
-export const getGroupBySlug = cache(
-  async (slug: string): Promise<Group | null> => {
-    const all = await listGroups();
-    return all.find((g) => g.slug === slug) ?? null;
-  },
-);
+function toCategory(row: Record<string, unknown>): Category {
+  const counts = row.business_categories as { count: number }[] | null;
+  return {
+    id: Number(row.id),
+    name: String(row.name),
+    slug: String(row.slug),
+    parentId: row.parent_id == null ? null : Number(row.parent_id),
+    imageUrl: (row.image_url as string | null) ?? null,
+    isOrderCapable: row.is_order_capable === true,
+    sortOrder: Number(row.sort_order),
+    businessCount: counts?.[0]?.count ?? 0,
+  };
+}
 
-/** Categorias com a contagem de empresas ativas — usado nas páginas de grupo. */
-export const listCategories = cache(
-  async (groupId?: number | null): Promise<Category[]> => {
+const CATEGORY_COLUMNS =
+  "id, name, slug, parent_id, image_url, is_order_capable, sort_order, business_categories!left(count)";
+
+/** Árvore inteira (principais + subcategorias) com a contagem de empresas. */
+export const listCategories = cache(async (): Promise<Category[]> => {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("categories")
+    .select(CATEGORY_COLUMNS)
+    .eq("is_active", true)
+    .order("sort_order");
+
+  if (error) throw new Error(`listCategories: ${error.message}`);
+  return ((data ?? []) as unknown as Record<string, unknown>[]).map(toCategory);
+});
+
+/**
+ * Subcategorias de uma principal — ou todas, quando `parentId` é omitido.
+ * O filtro do home/diretório usa a lista completa para montar o drill-down
+ * sem uma consulta por categoria.
+ */
+export const listSubcategories = cache(
+  async (parentId?: number | null): Promise<Category[]> => {
     const supabase = await createClient();
     let query = supabase
       .from("categories")
-      .select(
-        "id, name, slug, group_id, is_order_capable, sort_order, business_categories!left(count)",
-      )
+      .select(CATEGORY_COLUMNS)
+      .not("parent_id", "is", null)
       .eq("is_active", true)
       .order("sort_order");
 
-    if (groupId != null) query = query.eq("group_id", groupId);
+    if (parentId != null) query = query.eq("parent_id", parentId);
 
     const { data, error } = await query;
-    if (error) throw new Error(`listCategories: ${error.message}`);
-
-    return ((data ?? []) as unknown as Record<string, unknown>[]).map((row) => {
-      const counts = row.business_categories as { count: number }[] | null;
-      return {
-        id: Number(row.id),
-        name: String(row.name),
-        slug: String(row.slug),
-        groupId: row.group_id == null ? null : Number(row.group_id),
-        isOrderCapable: row.is_order_capable === true,
-        sortOrder: Number(row.sort_order),
-        businessCount: counts?.[0]?.count ?? 0,
-      };
-    });
+    if (error) throw new Error(`listSubcategories: ${error.message}`);
+    return ((data ?? []) as unknown as Record<string, unknown>[]).map(toCategory);
   },
 );
 
 export const getCategoryBySlug = cache(
   async (slug: string): Promise<Category | null> => {
-    const all = await listCategories();
-    return all.find((c) => c.slug === slug) ?? null;
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("categories")
+      .select(CATEGORY_COLUMNS)
+      .eq("slug", slug)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (error) throw new Error(`getCategoryBySlug: ${error.message}`);
+    return data ? toCategory(data as Record<string, unknown>) : null;
   },
 );
 
-/** Empresas de uma categoria, opcionalmente restritas a uma cidade. */
-export const listBusinessesByCategory = cache(
-  async (categoryId: number, cityId?: number | null): Promise<BusinessCard[]> => {
+export type CategoryCounts = {
+  /** slug da categoria principal -> nº de empresas na cidade. */
+  groups: Record<string, number>;
+  /** slug da subcategoria -> nº de empresas na cidade. */
+  categories: Record<string, number>;
+  /** total de empresas da cidade. */
+  total: number;
+};
+
+/**
+ * Contagens de empresas por categoria numa cidade, em uma ida ao banco.
+ * Substitui o N+1 que a home e o diretório faziam para montar os números
+ * dos pills.
+ */
+export const listCategoryCounts = cache(
+  async (cityId: number): Promise<CategoryCounts> => {
     const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("business_categories")
-      .select("business_id, businesses!inner(*, cities!inner(slug))")
-      .eq("category_id", categoryId);
+    const { data, error } = await supabase.rpc("list_category_counts", {
+      p_city_id: cityId,
+    });
+    if (error) throw new Error(`listCategoryCounts: ${error.message}`);
 
-    if (error) throw new Error(`listBusinessesByCategory: ${error.message}`);
-
-    const rows = (data ?? []) as unknown as Record<string, unknown>[];
-    return rows
-      .map((row) => {
-        const business = unwrap<Record<string, unknown>>(row.businesses);
-        if (!business) return null;
-        if (cityId != null && Number(business.city_id) !== cityId) return null;
-        const card = toCard(business, "");
-        card.citySlug = unwrap<{ slug: string }>(business.cities)?.slug ?? "";
-        return card;
-      })
-      .filter((c): c is BusinessCard => c !== null);
+    const payload = (data ?? {}) as {
+      groups?: Record<string, number> | null;
+      categories?: Record<string, number> | null;
+      total?: number | null;
+    };
+    const groups = payload.groups ?? {};
+    const categories = payload.categories ?? {};
+    const total =
+      payload.total ?? Object.values(groups).reduce((a, b) => a + b, 0);
+    return { groups, categories, total };
   },
 );
 
