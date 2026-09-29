@@ -153,7 +153,7 @@ function Icone({ children }: { children: ReactNode }) {
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
-      className="h-4 w-4 shrink-0"
+      className="h-3 w-3 shrink-0"
     >
       {children}
     </svg>
@@ -214,17 +214,20 @@ function Lixeira() {
 /** Só o feedback de "a action está voltando" — o botão já desativa sozinho. */
 function Girando() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-4 w-4 shrink-0 animate-spin">
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3 w-3 shrink-0 animate-spin">
       <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity={0.25} strokeWidth={2.5} />
       <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" />
     </svg>
   );
 }
 
-/* Botões: 40px de altura (o alvo de toque mínimo comfortable), contorno só no
-   foco, e o cinza de `hover` é `superficie-2` — `superficie` é quase branco e
-   some dentro de um card branco. */
-const base = "inline-flex h-10 items-center justify-center rounded-logo text-sm font-semibold transition-colors";
+/* Escala da barra de ações — 25% menor que a primeira versão (40px de caixa,
+   16px de ícone, `text-sm`). O raio desce junto, de 16px para 12px: manter o
+   token `rounded-logo` numa caixa de 30px transformaria os botões quadrados de
+   ícone em círculos. */
+const quadrado = "w-[30px] rounded-none";
+const base =
+  "inline-flex h-[30px] items-center justify-center rounded-[12px] text-xs font-semibold transition-colors";
 const fantasma = "text-texto-suave hover:bg-superficie-2 hover:text-texto-forte";
 
 function Botao({
@@ -290,7 +293,7 @@ function Interruptor({ ativo, nome }: { ativo: boolean; nome: string }) {
       }
       className={cn(
         base,
-        "gap-2.5 border px-3",
+        "gap-1.5 border px-2",
         ativo
           ? "border-sucesso/40 bg-sucesso/10 text-sucesso-700 hover:bg-sucesso/15"
           : "border-borda-forte bg-superficie text-texto-suave hover:bg-superficie-2 hover:text-texto-forte",
@@ -300,14 +303,14 @@ function Interruptor({ ativo, nome }: { ativo: boolean; nome: string }) {
       <span
         aria-hidden="true"
         className={cn(
-          "relative h-5 w-9 shrink-0 rounded-full transition-colors",
+          "relative h-[15px] w-[27px] shrink-0 rounded-full transition-colors",
           ativo ? "bg-sucesso" : "bg-borda-forte",
         )}
       >
         <span
           className={cn(
-            "absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-            ativo && "translate-x-4",
+            "absolute top-[1.5px] left-[1.5px] h-3 w-3 rounded-full bg-white shadow-sm transition-transform",
+            ativo && "translate-x-[13.5px]",
           )}
         />
       </span>
@@ -338,14 +341,14 @@ function BotaoExcluir({ nome }: { nome: string }) {
 
   return (
     <>
-      <span aria-hidden="true" className="hidden h-5 w-px bg-borda xs:block" />
+      <span aria-hidden="true" className="hidden h-4 w-px bg-borda xs:block" />
       <button
         type="submit"
         disabled={pending}
         title={`Excluir ${nome}`}
         className={cn(
           base,
-          "gap-2 px-3 text-texto-suave hover:bg-erro/10 hover:text-erro-700 disabled:opacity-60",
+          "gap-1.5 px-2 text-texto-suave hover:bg-erro/10 hover:text-erro-700 disabled:opacity-60",
         )}
       >
         {pending ? <Girando /> : <Lixeira />}
@@ -440,7 +443,7 @@ function Linha({
           {...listeners}
           title={`Arrastar ${no.name} para reordenar`}
           aria-label={`Reordenar ${no.name}. Arraste ou use as setas.`}
-          className="-ml-1 mt-1 grid h-10 w-8 shrink-0 cursor-grab place-items-center rounded-logo text-texto-tenue transition-colors hover:bg-superficie-2 hover:text-marca-800 active:cursor-grabbing"
+          className="-ml-1 mt-1 grid h-[30px] w-6 shrink-0 cursor-grab place-items-center rounded-[12px] text-texto-tenue transition-colors hover:bg-superficie-2 hover:text-marca-800 active:cursor-grabbing"
         >
           <Alca />
         </button>
@@ -460,19 +463,19 @@ function Linha({
               uma ajeitada), estado (o interruptor) e destruição (isolado à
               direita, atrás de um divisor, o único vermelho da linha). Sem
               isso o "Excluir" ficava a um Tab das setas de reordenar. */}
-          <div className="mt-3 flex flex-wrap items-center gap-1.5">
-            <div className="flex items-center overflow-hidden rounded-logo border border-borda bg-white">
+          <div className="mt-2 flex flex-wrap items-center gap-1">
+            <div className="flex items-center overflow-hidden rounded-[12px] border border-borda bg-white">
               <Botao
-                className="w-10 rounded-none"
+                className={quadrado}
                 rotulo={`Subir ${no.name}`}
                 onClick={() => onMover(no.id, -1)}
                 desativado={primeiro}
               >
                 <Chevron cima />
               </Botao>
-              <span aria-hidden="true" className="h-5 w-px bg-borda" />
+              <span aria-hidden="true" className="h-4 w-px bg-borda" />
               <Botao
-                className="w-10 rounded-none"
+                className={quadrado}
                 rotulo={`Descer ${no.name}`}
                 onClick={() => onMover(no.id, 1)}
                 desativado={ultimo}
@@ -483,7 +486,7 @@ function Linha({
 
             {nivel === 1 ? (
               <Botao
-                className="w-10"
+                className={quadrado}
                 rotulo={
                   principal
                     ? `Tirar ${no.name} de dentro de ${principal.name} e deixar como categoria principal`
@@ -507,7 +510,7 @@ function Linha({
               aria-controls={editando ? `edicao-${no.id}` : undefined}
               className={cn(
                 base,
-                "gap-2 border px-3",
+                "gap-1.5 border px-2",
                 editando
                   ? "border-marca-600/30 bg-marca-100 text-marca-800"
                   : cn(fantasma, "border-borda bg-white hover:border-borda-forte"),
@@ -517,7 +520,7 @@ function Linha({
               {editando ? "Fechar" : "Editar"}
             </button>
 
-            <form action={apagar} className="ml-auto flex items-center gap-3">
+            <form action={apagar} className="ml-auto flex items-center gap-2">
               <input type="hidden" name="id" value={no.id} />
               <BotaoExcluir nome={no.name} />
             </form>
