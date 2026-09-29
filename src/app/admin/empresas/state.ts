@@ -26,3 +26,16 @@ export const emptyBusinessForm: BusinessFormState = {
   error: null,
   fieldErrors: {},
 };
+
+/**
+ * Estado das caixinhas de categoria da lateral.
+ *
+ * `setBusinessCategory` grava uma linha por vez e não redireciona, então devolve
+ * estado para a tela confirmar o que foi salvo — ou dizer por que não foi.
+ */
+export type CategoryState = {
+  error: string | null;
+  saved: boolean;
+};
+
+export const emptyCategoryState: CategoryState = { error: null, saved: false };

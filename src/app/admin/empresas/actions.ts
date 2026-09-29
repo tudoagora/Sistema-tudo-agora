@@ -8,7 +8,7 @@ import { requireAdmin } from "@/lib/auth";
 import { hoursFromEntries } from "@/lib/format";
 import { digitsOnly, normalizeSubdomain, slugify } from "@/lib/slug";
 import { createClient } from "@/lib/supabase/server";
-import type { BusinessFormState } from "./state";
+import type { BusinessFormState, CategoryState } from "./state";
 
 const FULFILLMENTS = ["delivery", "pickup"] as const;
 const PAYMENTS = ["pix", "dinheiro", "cartao_entrega", "cartao_online"] as const;
@@ -256,33 +256,41 @@ export async function updateBusiness(
   revalidatePath("/");
   revalidatePath("/loja");
   revalidatePath(`/cidades/[cidade]/empresa/[slug]`, "page");
-  return { error: null, fieldErrors: {} };
+  return { error: null, fieldErrors: {}, saved: true };
 }
 
 /** Liga/desliga a empresa numa categoria da home (substitui o `data-ta-groups`). */
-export async function setBusinessCategory(formData: FormData) {
+export async function setBusinessCategory(
+  _prev: CategoryState,
+  formData: FormData,
+): Promise<CategoryState> {
   await requireAdmin();
   const businessId = Number(formData.get("businessId"));
   const categoryId = Number(formData.get("categoryId"));
   const active = formData.get("active") === "on";
-  if (!Number.isInteger(businessId) || !Number.isInteger(categoryId)) return;
+  if (!Number.isInteger(businessId) || !Number.isInteger(categoryId)) {
+    return { error: "Empresa ou categoria inválida.", saved: false };
+  }
 
   const supabase = await createClient();
-  if (active) {
-    await supabase
-      .from("business_categories")
-      .upsert({ business_id: businessId, category_id: categoryId, is_primary: false });
-  } else {
-    await supabase
-      .from("business_categories")
-      .delete()
-      .eq("business_id", businessId)
-      .eq("category_id", categoryId);
-  }
+  const gravacao = active
+    ? await supabase
+        .from("business_categories")
+        .upsert({ business_id: businessId, category_id: categoryId, is_primary: false })
+    : await supabase
+        .from("business_categories")
+        .delete()
+        .eq("business_id", businessId)
+        .eq("category_id", categoryId);
+
+  // Sem este check a falha era muda: o checkbox ficava marcado na tela e sumia
+  // no próximo reload, sem nenhuma pista do motivo.
+  if (gravacao.error) return { error: gravacao.error.message, saved: false };
 
   revalidatePath(`/admin/empresas/${businessId}`);
   revalidatePath("/");
   revalidatePath("/loja");
+  return { error: null, saved: active };
 }
 
 export async function deleteBusiness(formData: FormData) {

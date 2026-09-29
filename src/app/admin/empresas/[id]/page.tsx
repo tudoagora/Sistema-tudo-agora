@@ -7,36 +7,10 @@ import { requireAdmin } from "@/lib/auth";
 import { listCategories, listCities } from "@/lib/catalog";
 import type { OpeningHours } from "@/lib/format";
 import { createClient } from "@/lib/supabase/server";
-import { deleteBusiness, publishBusiness, setBusinessCategory } from "../actions";
+import { deleteBusiness, publishBusiness } from "../actions";
+import { CategoryToggle } from "./category-toggle";
 
 export const metadata: Metadata = { title: "Editar empresa" };
-
-/** Uma linha da lista de categorias da empresa: principal ou subcategoria. */
-function CategoriaCheckbox({
-  businessId,
-  category,
-  marcado,
-}: {
-  businessId: number;
-  category: { id: number; name: string };
-  marcado: boolean;
-}) {
-  return (
-    <form action={setBusinessCategory} className="flex items-center gap-2">
-      <input type="hidden" name="businessId" value={businessId} />
-      <input type="hidden" name="categoryId" value={category.id} />
-      <label className="flex min-h-9 w-full cursor-pointer items-center gap-2 rounded-logo px-2 text-sm text-texto-forte transition-colors hover:bg-superficie">
-        <input
-          type="checkbox"
-          name="active"
-          defaultChecked={marcado}
-          className="h-4 w-4 accent-marca-800"
-        />
-        {category.name}
-      </label>
-    </form>
-  );
-}
 
 export default async function EditBusinessPage(props: PageProps<"/admin/empresas/[id]">) {
   await requireAdmin();
@@ -142,17 +116,19 @@ export default async function EditBusinessPage(props: PageProps<"/admin/empresas
                 <li key={raiz.id}>
                   <ul className="space-y-1.5">
                     <li>
-                      <CategoriaCheckbox
+                      <CategoryToggle
                         businessId={business.id}
-                        category={raiz}
+                        categoryId={raiz.id}
+                        name={raiz.name}
                         marcado={linked.has(raiz.id)}
                       />
                     </li>
                     {filhasDe(raiz.id).map((filha) => (
                       <li key={filha.id} className="pl-5">
-                        <CategoriaCheckbox
+                        <CategoryToggle
                           businessId={business.id}
-                          category={filha}
+                          categoryId={filha.id}
+                          name={filha.name}
                           marcado={linked.has(filha.id)}
                         />
                       </li>
