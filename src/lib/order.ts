@@ -160,6 +160,59 @@ export function canCancelOrder(status: string) {
 }
 
 /**
+ * O mesmo conjunto de `canCancelOrder`, já como lista — para virar um
+ * `.in("status", ...)` do UPDATE. Derivar de `canCancelOrder` garante que a
+ * checagem da tela e a condição do SQL não podem discordar.
+ */
+export function cancelableOrderStatuses(): OrderStatus[] {
+  return (Object.keys(ORDER_SOURCES) as OrderStatus[]).filter((status) =>
+    canCancelOrder(status),
+  );
+}
+
+/**
+ * De onde cada status pode ser alcançado — a máquina de estados do pedido.
+ *
+ * `nextOrderStep` e `previousOrderStep` são a mesma máquina com rótulo, para a
+ * tela; esta tabela é a versão que o servidor consulta antes de gravar. As duas
+ * precisam conhecer os mesmos arestas, então qualquer passo novo entra aqui e
+ * nos dois de uma vez.
+ *
+ * A direção importa: a chave é o status de DESTINO e a lista é o conjunto de
+ * status de origem. `cancelled` tem lista vazia de propósito — cancelar exige
+ * motivo e passa por `cancelOrder`, então esta tabela jamais pode autorizar a
+ * transição.
+ */
+const ORDER_SOURCES: Record<OrderStatus, OrderStatus[]> = {
+  pending: [],
+  confirmed: ["pending"],
+  preparing: ["confirmed"],
+  out_for_delivery: ["preparing"],
+  ready_for_pickup: ["preparing"],
+  completed: ["out_for_delivery", "ready_for_pickup"],
+  cancelled: [],
+};
+
+/**
+ * Status de onde `target` pode ser alcançado, ou `null` se `target` não é um
+ * destino alcançável (ele mesmo `pending`, que é o início, e `cancelled`, que
+ * só o `cancelOrder` concede).
+ *
+ * O servidor usa isso direto num `.in("status", ...)` do UPDATE: a condição
+ * entra no próprio SQL, então a transição é atômica e não existe janela entre
+ * "ler o atual" e "gravar o novo" — o TOCTOU do `cancelOrder` aconteceu
+ * exatamente aí.
+ */
+export function orderTransitionSources(target: string): OrderStatus[] | null {
+  return ORDER_SOURCES[target as OrderStatus] ?? null;
+}
+
+/** Mesma regra em forma de pergunta, para onde a resposta é usada direto. */
+export function canTransitionOrder(from: string, to: string) {
+  return orderTransitionSources(to)?.includes(from as OrderStatus) ?? false;
+}
+
+/**
  * Transição inversa, para desfazer um avanço sem querer.
  *
  * "Aceitar" com o dedo errado é comum, e sem volta o pedido ficava travado em

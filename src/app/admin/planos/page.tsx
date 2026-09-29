@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { AdminFlash } from "@/components/admin/flash";
 import { requireAdmin } from "@/lib/auth";
+import type { AdminFlashParams } from "@/lib/admin-flash";
 import { listPlans } from "@/lib/catalog";
 import { formatBRL } from "@/lib/format";
 import { updatePlan } from "./actions";
@@ -13,8 +15,11 @@ const PERIOD_LABEL: Record<string, string> = {
   year: "anual",
 };
 
-export default async function PlansAdminPage() {
+export default async function PlansAdminPage(
+  props: PageProps<"/admin/planos">,
+) {
   await requireAdmin();
+  const params = (await props.searchParams) as AdminFlashParams;
   const plans = await listPlans();
 
   return (
@@ -27,6 +32,8 @@ export default async function PlansAdminPage() {
         No WordPress a landing anunciava 3 planos que nunca existiram no banco —
         o cadastro aqui é a fonte da verdade.
       </p>
+
+      <AdminFlash params={params} />
 
       <ul className="mt-8 space-y-4">
         {plans.map((plan) => (

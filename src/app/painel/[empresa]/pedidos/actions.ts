@@ -5,7 +5,11 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { requireBusinessMember } from "@/lib/auth";
-import { canCancelOrder } from "@/lib/order";
+import {
+  canCancelOrder,
+  cancelableOrderStatuses,
+  orderTransitionSources,
+} from "@/lib/order";
 import { createClient } from "@/lib/supabase/server";
 
 import type { CancelState } from "./state";
@@ -41,6 +45,12 @@ function paginaDaEmpresa(businessId: number) {
  * A RLS `orders_business_update` (migration 0003) restringe ao lojista da
  * empresa, e o `.eq("business_id")` fecha o resto — sem isso um id de pedido
  * adivinhado de outra empresa passaria pela checagem de papel.
+ *
+ * A transição também é conferida, e no próprio SQL: `.in("status", ...)` diz de
+ * onde o destino pode ser alcançado. Sem isso a action aceitava qualquer par
+ * e um POST forjado ressuscitava um pedido cancelado, apagando o histórico de
+ * um cancelamento legítimo. Como a condição vai no UPDATE, não existe janela
+ * entre ler e gravar.
  */
 export async function updateOrderStatus(formData: FormData) {
   const businessId = Number(formData.get("businessId"));
@@ -52,12 +62,18 @@ export async function updateOrderStatus(formData: FormData) {
   const parsed = statusSchema.safeParse(formData.get("status"));
   if (!parsed.success || !Number.isInteger(orderId)) return;
 
+  // `null` = destino inalcançável por esta action. `[]` = destino válido mas
+  // sem origem conhecida (o próprio `pending`, que é o início do fluxo). Nos
+  // dois casos não há o que gravar.
+  const fontes = orderTransitionSources(parsed.data);
+  if (!fontes?.length) return;
+
   const supabase = await createClient();
   const now = new Date().toISOString();
 
   // Voltar um passo tem que limpar o carimbo do passo que deixou de valer.
   // Sem isso um pedido que saiu de "em preparo" e voltou carregaria um
-  // `completed_at` de quando foi concluded, e o histórico mente.
+  // `completed_at` de quando foi concluído, e o histórico mente.
   const patch =
     parsed.data === "confirmed"
       ? { status: parsed.data, confirmed_at: now }
@@ -71,7 +87,8 @@ export async function updateOrderStatus(formData: FormData) {
     .from("orders")
     .update(patch)
     .eq("id", orderId)
-    .eq("business_id", businessId);
+    .eq("business_id", businessId)
+    .in("status", fontes);
 
   revalidatePath(backTo || paginaDaEmpresa(businessId));
 }
@@ -81,7 +98,10 @@ export async function updateOrderStatus(formData: FormData) {
  *
  * O status atual é lido do banco em vez de vir de campo escondido: é o que
  * garante que um pedido já concluído não seja cancelado por quem mexer no
- * HTML, e que o motivo gravado corresponda ao que estava na tela.
+ * HTML, e que o motivo gravado corresponda ao que estava na tela. A leitura
+ * sozinha não fecha a porta, porém — entre ela e o UPDATE o pedido pode ter
+ * sido concluído por outra aba. Por isso o UPDATE também carrega a condição
+ * de status, e é a linha afetada que confirma o cancelamento.
  */
 export async function cancelOrder(
   _prev: CancelState,
@@ -128,7 +148,8 @@ export async function cancelOrder(
     .from("orders")
     .update({ status: "cancelled", cancellation_reason: parsed.data.reason })
     .eq("id", orderId)
-    .eq("business_id", businessId);
+    .eq("business_id", businessId)
+    .in("status", cancelableOrderStatuses());
 
   if (error) {
     return { error: error.message, reason: parsed.data.reason };
@@ -158,7 +179,10 @@ export async function markOrderPaid(formData: FormData) {
     .from("orders")
     .update({ payment_status: "paid" })
     .eq("id", orderId)
-    .eq("business_id", businessId);
+    .eq("business_id", businessId)
+    // Pedido cancelado não gera o que receber: o lojista não tinha como cobrar
+    // por um pedido que ele mesmo recusou.
+    .neq("status", "cancelled");
 
   revalidatePath(backTo || paginaDaEmpresa(businessId));
 }

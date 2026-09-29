@@ -4,21 +4,10 @@ import { useMemo, useState } from "react";
 
 import type { Menu, MenuItem } from "@/lib/catalog";
 import { formatBRL } from "@/lib/format";
+import { lineUnitPriceCents } from "@/lib/pricing";
 import { cn } from "@/lib/utils";
 
 type Selection = Record<number, number[]>;
-
-/** Soma o delta dos grupos de opção marcados para um item. */
-function deltaFor(item: MenuItem, selected: Record<number, number[]>) {
-  let total = 0;
-  for (const group of item.option_groups) {
-    for (const valueId of selected[group.id] ?? []) {
-      const value = group.values.find((v) => v.id === valueId);
-      if (value) total += value.price_delta_cents;
-    }
-  }
-  return total;
-}
 
 function toggle(selection: Selection, groupId: number, valueId: number, max: number) {
   const current = selection[groupId] ?? [];
@@ -131,7 +120,11 @@ function MenuGroup({
           const groups = item.option_groups.filter(
             (group) => group.values.length > 0,
           );
-          const total = item.price_cents + deltaFor(item, selection);
+          // A conta é a mesma da vitrine e do `placeOrder` (`pricing.ts`).
+          // Antes esta prévia somava todos os deltas, inclusive os dos sabores,
+          // enquanto o servidor cobrava só o sabor mais caro: o cliente lia um
+          // total e pagava outro.
+          const total = lineUnitPriceCents(item, selection);
 
           return (
             <li
@@ -206,8 +199,13 @@ function MenuGroup({
                                 )}
                               >
                                 {value.name}
+                                {/* No grupo de sabores o delta é o preço
+                                    cheio daquele sabor, não um acréscimo —
+                                    por isso nada de "+" na frente. */}
                                 {value.price_delta_cents > 0
-                                  ? ` +${formatBRL(value.price_delta_cents)}`
+                                  ? group.is_flavor_group
+                                    ? ` ${formatBRL(value.price_delta_cents)}`
+                                    : ` +${formatBRL(value.price_delta_cents)}`
                                   : ""}
                               </button>
                             );

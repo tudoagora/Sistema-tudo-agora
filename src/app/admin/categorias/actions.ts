@@ -264,12 +264,22 @@ export async function reorderCategories(formData: FormData) {
   revalidateCategorias();
 }
 
-/** Liga/desliga a categoria sem sair da tela — mesmo caso da edição. */
-export async function toggleCategory(formData: FormData) {
+/**
+ * Liga/desliga a categoria sem sair da tela — mesmo caso da edição.
+ *
+ * O `UPDATE` devolvia o erro para o vazio, então o interruptor marcava como
+ * desligado na tela e voltava ligado no próximo load, sem nenhuma pista. Como
+ * `deleteCategory` e `updateCategory` já são actions de estado, esta segue o
+ * mesmo desenho em vez de ser a única que engole a falha.
+ */
+export async function toggleCategory(
+  _prev: CategoryFormState,
+  formData: FormData,
+): Promise<CategoryFormState> {
   await requireAdmin();
 
   const id = Number(formData.get("id"));
-  if (!Number.isInteger(id)) return;
+  if (!Number.isInteger(id)) return { error: "Categoria inválida." };
 
   const supabase = await createClient();
   const { data: atual, error: erroLeitura } = await supabase
@@ -277,12 +287,15 @@ export async function toggleCategory(formData: FormData) {
     .select("is_active")
     .eq("id", id)
     .maybeSingle();
-  if (erroLeitura || !atual) return;
+  if (erroLeitura) return { error: friendly(erroLeitura) };
+  if (!atual) return { error: "Categoria não encontrada." };
 
-  await supabase
+  const { error } = await supabase
     .from("categories")
     .update({ is_active: !atual.is_active })
     .eq("id", id);
+  if (error) return { error: friendly(error) };
 
   revalidateCategorias();
+  return { error: null };
 }

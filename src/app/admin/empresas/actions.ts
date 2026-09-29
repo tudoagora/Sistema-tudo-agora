@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { requireAdmin } from "@/lib/auth";
+import { businessStatusSchema } from "@/lib/business-status";
 import { hoursFromEntries } from "@/lib/format";
 import { digitsOnly, normalizeSubdomain, slugify } from "@/lib/slug";
 import { createClient } from "@/lib/supabase/server";
@@ -34,7 +35,15 @@ export async function publishBusiness(formData: FormData) {
   if (!Number.isInteger(id)) return;
 
   const supabase = await createClient();
-  await supabase.from("businesses").update({ status: "active" }).eq("id", id);
+  // Sem checar o erro, uma empresa podia não ir ao ar e o admin ver o mesmo
+  // "no ar" da tela que já estava em rascunho — nada indicava a falha.
+  const { error } = await supabase
+    .from("businesses")
+    .update({ status: "active" })
+    .eq("id", id);
+
+  if (error) return;
+
   revalidatePath("/admin");
   revalidatePath("/admin/empresas");
   revalidatePath("/");
@@ -68,7 +77,7 @@ const schema = z.object({
   paymentMethods: z.array(z.enum(PAYMENTS)).default([]),
   acceptQuotes: z.boolean().default(false),
   isFeatured: z.boolean().default(false),
-  status: z.enum(["draft", "active"]).default("draft"),
+  status: businessStatusSchema.default("draft"),
 });
 
 function fieldErrorsFrom(error: z.ZodError) {
@@ -299,11 +308,21 @@ export async function deleteBusiness(formData: FormData) {
   if (!Number.isInteger(id)) return;
 
   const supabase = await createClient();
-  await supabase.from("businesses").delete().eq("id", id);
+  // `select` volta as linhas realmente apagadas: um 204 com 0 linhas é o
+  // PostgREST respondendo a um DELETE que a RLS barrou, e redirecionar com
+  // "excluída=1" nesse caso seria mentir para o admin.
+  const { data, error } = await supabase
+    .from("businesses")
+    .delete()
+    .eq("id", id)
+    .select("id");
+
+  if (error || !data?.length) return;
 
   revalidatePath("/admin");
   revalidatePath("/admin/empresas");
   revalidatePath("/");
   revalidatePath("/loja");
-  redirect("/admin/empresas?excluida=1");
+  revalidatePath(`/cidades/[cidade]/empresa/[slug]`, "page");
+  redirect("/admin/empresas?feito=empresa-excluida");
 }

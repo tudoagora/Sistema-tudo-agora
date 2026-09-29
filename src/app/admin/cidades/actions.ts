@@ -28,11 +28,28 @@ export async function deleteCity(formData: FormData) {
   const supabase = await createClient();
   // `businesses.city_id` é on delete restrict: a cidade não some se houver
   // empresa ligada nela, e o banco devolve o erro em vez de apagar em cascade.
-  await supabase.from("cities").delete().eq("id", id);
+  // Esse erro era descartado e a tela revalidava do mesmo jeito: o admin
+  // clicava em excluir, a cidade continuava na lista e nada dizia por que. A
+  // resposta volta pela query string porque o botão vive num form sem
+  // `useActionState` — sem ela o admin só tinha o sumiço do registro.
+  const { error, count } = await supabase
+    .from("cities")
+    .delete({ count: "exact" })
+    .eq("id", id);
+
+  if (error) {
+    console.error("[deleteCity] falha ao excluir", { id, error });
+    redirect("/admin/cidades?erro=cidade-com-empresas");
+  }
+  if (!count) {
+    redirect("/admin/cidades?erro=cidade-inexistente");
+  }
+
   revalidatePath("/admin/cidades");
   revalidatePath("/admin");
   revalidatePath("/");
   revalidatePath("/loja");
+  redirect("/admin/cidades?feito=cidade-excluida");
 }
 
 export async function createCity(

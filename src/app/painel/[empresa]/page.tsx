@@ -3,6 +3,7 @@ import type { Route } from "next";
 import Link from "next/link";
 
 import { requireBusinessMember } from "@/lib/auth";
+import { businessStatusLabel } from "@/lib/business-status";
 import { ORDER_STATUS_LABELS } from "@/lib/order";
 import { createClient } from "@/lib/supabase/server";
 
@@ -11,13 +12,6 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  draft: "Rascunho",
-  pending: "Aguardando aprovação",
-  active: "Ativa",
-  suspended: "Suspensa",
-  closed: "Encerrada",
-};
 
 /**
  * Resumo da empresa — a tela que `/painel` abre ao clicar na loja.
@@ -82,7 +76,7 @@ export default async function PanelBusinessPage(
       {business.status !== "active" ? (
         <p className="rounded-card border border-aviso/40 bg-aviso/5 px-5 py-4 text-sm text-texto-forte">
           Sua empresa está com situação{" "}
-          <strong>{STATUS_LABELS[business.status] ?? business.status}</strong>. O
+          <strong>{businessStatusLabel(business.status)}</strong>. O
           cardápio e a vitrine só ficam públicos depois que a equipe do Tudo
           Agora ativar a empresa.
         </p>

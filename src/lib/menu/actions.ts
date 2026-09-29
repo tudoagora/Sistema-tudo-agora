@@ -443,14 +443,21 @@ export async function moveProduct(formData: FormData) {
   const target = direction === "up" ? index - 1 : index + 1;
   if (index < 0 || target < 0 || target >= rows.length) return noop;
 
-  await supabase
+  // Trocar dois `sort_order` não é transação: se a segunda escrita falhar, os
+  // dois itens ficam com o mesmo número e a ordem do cardápio vira indefinida.
+  // O banco já garante unicidade, então a segunda é o teste — e o erro que
+  // ela devolvia era descartado, e a tela confirmava "Item movido".
+  const subiu = await supabase
     .from("products")
     .update({ sort_order: rows[target].sort_order })
     .eq("id", rows[index].id);
-  await supabase
+  if (subiu.error) return failWith(subiu.error.message);
+
+  const desceu = await supabase
     .from("products")
     .update({ sort_order: rows[index].sort_order })
     .eq("id", rows[target].id);
+  if (desceu.error) return failWith(desceu.error.message);
 
   revalidateMenu(businessId);
   return okWith("Item movido.");

@@ -32,6 +32,19 @@ const storage = storagePattern();
 
 const nextConfig: NextConfig = {
   typedRoutes: true,
+  experimental: {
+    serverActions: {
+      /**
+       * O limite padrão do Next é 1 MB, e ele é aplicado pelo runtime ANTES
+       * da action rodar: uma foto de produto de 2 MB era recusada com um erro
+       * de infraestrutura, sem mensagem para o lojista e sem passar pelo
+       * `MAX_IMAGE_BYTES` que valida a mesma coisa com mensagem boa. Aqui o
+       * teto fica acima do que a aplicação aceita, de propósito — a validação
+       * continua sendo a da action, que é quem sabe escrever a mensagem.
+       */
+      bodySizeLimit: "6mb",
+    },
+  },
   images: {
     // Logos e banners legados ainda vivem no WordPress durante a migração.
     // Fotos de cardápio já vão para o bucket, tratado acima.

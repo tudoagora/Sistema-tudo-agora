@@ -54,7 +54,13 @@ function orderCode(): string {
  * registro pela metade.
  */
 async function discardOrder(admin: SupabaseClient<Database>, orderId: number) {
-  await admin.from("orders").delete().eq("id", orderId);
+  const { error } = await admin.from("orders").delete().eq("id", orderId);
+  // Não há UI para mostrar nada aqui: este rollback roda depois que a criação
+  // do pedido já falhou. A única forma de o pedido pela metade aparecer no banco
+  // e não sumir silenciosamente é deixar o registro, então ele vai para o log.
+  if (error) {
+    console.error("[placeOrder] rollback falhou, pedido orfao", { orderId, error });
+  }
 }
 
 const lineSchema = z.object({

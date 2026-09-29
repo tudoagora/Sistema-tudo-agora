@@ -16,6 +16,10 @@ import {
   type ProfileState,
 } from "@/app/painel/[empresa]/perfil/actions";
 import { ImageField } from "@/components/menu/image-field";
+import {
+  BUSINESS_STATUSES,
+  BUSINESS_STATUS_OPTIONS,
+} from "@/lib/business-status";
 import type { City } from "@/lib/catalog";
 import {
   FULFILLMENT_LABELS,
@@ -478,10 +482,11 @@ export function BusinessForm({
               defaultValue={defaults?.status ?? "draft"}
               className={field}
             >
-              <option value="draft">Rascunho — invisível no site</option>
-              <option value="active">Ativa — visível no site</option>
-              <option value="suspended">Suspensa</option>
-              <option value="closed">Encerrada</option>
+              {BUSINESS_STATUSES.map((value) => (
+                <option key={value} value={value}>
+                  {BUSINESS_STATUS_OPTIONS[value]}
+                </option>
+              ))}
             </select>
             <p className="mt-2 text-xs text-texto-tenue">
               Somente a equipe do Tudo Agora altera a situação da empresa.

@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { AdminFlash } from "@/components/admin/flash";
 import { requireAdmin } from "@/lib/auth";
+import type { AdminFlashParams } from "@/lib/admin-flash";
 import { listCities } from "@/lib/catalog";
 import { formatBRL } from "@/lib/format";
 import { isOfferActive } from "@/lib/offer";
@@ -10,8 +12,11 @@ import { deleteOffer } from "./actions";
 
 export const metadata: Metadata = { title: "Ofertas" };
 
-export default async function OffersAdminPage() {
+export default async function OffersAdminPage(
+  props: PageProps<"/admin/ofertas">,
+) {
   await requireAdmin();
+  const params = (await props.searchParams) as AdminFlashParams;
   const supabase = await createClient();
   const city = await listCities().then((c) => c[0] ?? null);
 
@@ -24,6 +29,7 @@ export default async function OffersAdminPage() {
   return (
     <div>
       <h1 className="text-2xl font-black tracking-tight text-marca-800">Ofertas</h1>
+      <AdminFlash params={params} />
       <p className="mt-1 text-sm text-texto-suave">
        Campanhas com preço destaque, exibidas em{" "}
         <Link href="/ofertas" className="font-semibold text-marca-600 underline">/ofertas</Link>.

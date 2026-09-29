@@ -398,6 +398,7 @@ function Linha({
   const [editando, setEditando] = useState(false);
   const [editState, editar] = useActionState(updateCategory, inicial);
   const [apagarState, apagar] = useActionState(deleteCategory, inicial);
+  const [alternarState, alternar] = useActionState(toggleCategory, inicial);
 
   const principal = raizes.find((raiz) => raiz.id === no.parentId);
   const destacado = alvo?.id === no.id;
@@ -498,9 +499,10 @@ function Linha({
               </Botao>
             ) : null}
 
-            <form action={toggleCategory}>
+            <form action={alternar} className="flex items-center gap-2">
               <input type="hidden" name="id" value={no.id} />
               <Interruptor ativo={no.isActive} nome={no.name} />
+              {alternarState.error ? <Aviso>{alternarState.error}</Aviso> : null}
             </form>
 
             <button

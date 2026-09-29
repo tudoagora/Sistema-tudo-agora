@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { requireAdmin } from "@/lib/auth";
@@ -26,7 +27,10 @@ export async function updatePlan(formData: FormData) {
   if (!parsed.success) return;
 
   const supabase = await createClient();
-  await supabase
+  // Preço de plano é o número que o cliente vê na landing. A escrita devolvia
+  // o erro para o vazio e a tela revalidava, então o admin via o valor novo,
+  // saía da página e o preço antigo continuava no ar.
+  const { error } = await supabase
     .from("plans")
     .update({
       price_cents: Math.round(parsed.data.priceReais * 100),
@@ -34,6 +38,12 @@ export async function updatePlan(formData: FormData) {
       is_featured: parsed.data.isFeatured,
     })
     .eq("id", parsed.data.id);
+
+  if (error) {
+    console.error("[updatePlan] falha ao salvar", { id: parsed.data.id, error });
+    redirect("/admin/planos?erro=salvar-plano");
+  }
+
 
   revalidatePath("/admin/planos");
   revalidatePath("/planos");

@@ -1,19 +1,20 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { AdminFlash } from "@/components/admin/flash";
+import type { AdminFlashParams } from "@/lib/admin-flash";
 import { requireAdmin } from "@/lib/auth";
+import {
+  businessStatusClass,
+  businessStatusLabel,
+  BUSINESS_STATUSES,
+  BUSINESS_STATUS_OPTIONS,
+} from "@/lib/business-status";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "Empresas" };
 
-const STATUS_LABEL: Record<string, string> = {
-  active: "Ativa",
-  draft: "Rascunho",
-  suspended: "Suspensa",
-  closed: "Encerrada",
-};
-
-type Search = { q?: string; status?: string; city?: string };
+type Search = AdminFlashParams & { q?: string; status?: string; city?: string };
 
 export default async function BusinessesPage(props: PageProps<"/admin/empresas">) {
   await requireAdmin();
@@ -57,6 +58,7 @@ export default async function BusinessesPage(props: PageProps<"/admin/empresas">
 
   return (
     <div>
+      <AdminFlash params={params} />
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-black tracking-tight text-marca-800">Empresas</h1>
@@ -89,9 +91,9 @@ export default async function BusinessesPage(props: PageProps<"/admin/empresas">
           className="min-h-11 rounded-logo border border-borda bg-white px-3 text-sm focus:border-marca-600"
         >
           <option value="">Todas as situações</option>
-          {Object.entries(STATUS_LABEL).map(([value, label]) => (
+          {BUSINESS_STATUSES.map((value) => (
             <option key={value} value={value}>
-              {label}
+              {BUSINESS_STATUS_OPTIONS[value]}
             </option>
           ))}
         </select>
@@ -154,14 +156,10 @@ export default async function BusinessesPage(props: PageProps<"/admin/empresas">
                   <td className="px-4 py-3">
                     <span
                       className={`inline-block rounded-pill px-3 py-1 text-xs font-bold ${
-                        business.status === "active"
-                          ? "bg-sucesso/10 text-sucesso-700"
-                          : business.status === "draft"
-                            ? "bg-aviso/10 text-aviso-700"
-                            : "bg-superficie-2 text-texto-suave"
+                        businessStatusClass(business.status)
                       }`}
                     >
-                      {STATUS_LABEL[business.status] ?? business.status}
+                      {businessStatusLabel(business.status)}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-xs text-texto-tenue">{business.source ?? "—"}</td>

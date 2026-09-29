@@ -4,24 +4,14 @@ import Link from "next/link";
 
 import { BusinessAvatar } from "@/components/business-card";
 import { listManagedBusinesses, requireUser } from "@/lib/auth";
+import {
+  businessStatusClass,
+  businessStatusLabel,
+} from "@/lib/business-status";
 
 export const metadata: Metadata = {
   title: "Minhas empresas",
   description: "Gerencie o cardápio e os pedidos das suas empresas no Tudo Agora.",
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  draft: "Rascunho",
-  pending: "Aguardando aprovação",
-  active: "Ativa",
-  suspended: "Suspensa",
-};
-
-const STATUS_CLASS: Record<string, string> = {
-  draft: "bg-superficie-2 text-texto-suave",
-  pending: "bg-aviso/15 text-aviso-700",
-  active: "bg-sucesso/10 text-sucesso-700",
-  suspended: "bg-erro/10 text-erro-700",
 };
 
 export default async function PanelPage(props: PageProps<"/painel">) {
@@ -64,8 +54,7 @@ export default async function PanelPage(props: PageProps<"/painel">) {
       ) : (
         <ul className="mt-6 grid gap-3 sm:grid-cols-2">
           {entries.map(({ business, memberRole }) => {
-            const statusClass =
-              STATUS_CLASS[business.status] ?? STATUS_CLASS.draft;
+            const statusClass = businessStatusClass(business.status);
 
             return (
               <li key={business.id}>
@@ -89,7 +78,7 @@ export default async function PanelPage(props: PageProps<"/painel">) {
                       <span
                         className={`rounded-pill px-2 py-0.5 text-xs font-bold ${statusClass}`}
                       >
-                        {STATUS_LABELS[business.status] ?? business.status}
+                        {businessStatusLabel(business.status)}
                       </span>
                       <span className="rounded-pill bg-superficie-2 px-2 py-0.5 text-xs font-semibold text-texto-suave">
                         {memberRole === "admin"

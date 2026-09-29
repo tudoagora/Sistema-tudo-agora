@@ -2,16 +2,10 @@ import Link from "next/link";
 import type { Metadata } from "next";
 
 import { requireAdmin } from "@/lib/auth";
+import { businessStatusLabel } from "@/lib/business-status";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "Visão geral" };
-
-const STATUS_LABEL: Record<string, string> = {
-  active: "Ativa",
-  draft: "Rascunho",
-  suspended: "Suspensa",
-  closed: "Encerrada",
-};
 
 export default async function AdminDashboard() {
   await requireAdmin();
@@ -180,7 +174,7 @@ function StatusBadge({ status }: { status: string }) {
 
   return (
     <span className={`inline-block rounded-pill px-3 py-1 text-xs font-bold ${tone}`}>
-      {STATUS_LABEL[status] ?? status}
+      {businessStatusLabel(status)}
     </span>
   );
 }

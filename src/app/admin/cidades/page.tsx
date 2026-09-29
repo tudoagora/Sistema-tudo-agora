@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 
+import { AdminFlash } from "@/components/admin/flash";
 import { requireAdmin } from "@/lib/auth";
+import type { AdminFlashParams } from "@/lib/admin-flash";
 import { listCities } from "@/lib/catalog";
 import { createClient } from "@/lib/supabase/server";
 import { deleteCity } from "./actions";
@@ -8,8 +10,11 @@ import { CityForm } from "./city-form";
 
 export const metadata: Metadata = { title: "Cidades" };
 
-export default async function CitiesAdminPage() {
+export default async function CitiesAdminPage(
+  props: PageProps<"/admin/cidades">,
+) {
   await requireAdmin();
+  const params = (await props.searchParams) as AdminFlashParams;
   const cities = await listCities();
   const supabase = await createClient();
 
@@ -26,6 +31,7 @@ export default async function CitiesAdminPage() {
   return (
     <div className="mx-auto w-full max-w-3xl">
       <h1 className="text-2xl font-black tracking-tight text-marca-800">Cidades</h1>
+      <AdminFlash params={params} />
       <p className="mt-1 text-sm text-texto-suave">
         Tapurah é a primeira praça. Cadastre a próxima para abrir o diretório em
         outra cidade.
