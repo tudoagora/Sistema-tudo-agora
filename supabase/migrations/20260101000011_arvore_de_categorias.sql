@@ -160,6 +160,12 @@ as $$
       from links l
       left join public.categories r on r.id = l.parent_id
      group by 1
+  ), categorized as (
+    -- `count` fica numa CTE própria porque aggregate não aninha em aggregate:
+    -- `jsonb_object_agg(slug, count(distinct ...))` é erro 42803 no Postgres.
+    select l.slug as slug, count(distinct l.business_id) as total
+      from links l
+     group by 1
   )
   select jsonb_build_object(
     'groups', coalesce(
@@ -167,8 +173,7 @@ as $$
       '{}'::jsonb
     ),
     'categories', coalesce(
-      (select jsonb_object_agg(l.slug, count(distinct l.business_id))
-         from links l),
+      (select jsonb_object_agg(slug, total) from categorized),
       '{}'::jsonb
     ),
     'total', (select count(distinct business_id) from links)

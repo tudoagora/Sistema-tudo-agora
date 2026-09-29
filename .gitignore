@@ -38,6 +38,12 @@ yarn-error.log*
 service-role*.json
 *-service-role.json
 
+# credenciais do projeto (PAT do Supabase, senha do banco) — NUNCA commitar
+# As duas grafias ficam: em Linux o glob é case-sensitive e `CREDENCIAIS.md`
+# escaparia de `credenciais*.md`.
+CREDENCIAIS*.md
+credenciais*.md
+
 # vercel
 .vercel
 
