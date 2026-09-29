@@ -20,6 +20,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Fragment, useActionState, useRef, useState, type ReactNode } from "react";
+import { useFormStatus } from "react-dom";
 
 import { cn } from "@/lib/utils";
 import {
@@ -135,6 +136,30 @@ function promover(nos: CategoryNode[], id: number): CategoryNode[] {
   return acima ? mover(nos, id, acima.id, "depois") : nos;
 }
 
+/* ============================================================
+   Ícones — traço único, 24px, mesmo peso em toda a barra.
+   Glifo de texto (↑ ↓ ◉ ⇧) parece emoji: traço irregular, espessura
+   diferente da fonte e nenhum significado. Desenho próprio tem a mesma
+   espessura dos ícones do resto do app e escala junto com o texto.
+   ============================================================ */
+
+function Icone({ children }: { children: ReactNode }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="h-4 w-4 shrink-0"
+    >
+      {children}
+    </svg>
+  );
+}
+
 function Alca() {
   return (
     <svg viewBox="0 0 10 16" aria-hidden="true" className="h-4 w-2.5 fill-current">
@@ -148,39 +173,150 @@ function Alca() {
   );
 }
 
+function Chevron({ cima = false }: { cima?: boolean }) {
+  return (
+    <Icone>
+      <path d={cima ? "m6 14 6-6 6 6" : "m6 10 6 6 6-6"} />
+    </Icone>
+  );
+}
+
+/** Seta que sai de dentro e vira para fora: "promover para o nível de cima". */
+function SetaParaFora() {
+  return (
+    <Icone>
+      <path d="M9 14 4 9l5-5" />
+      <path d="M4 9h10a6 6 0 0 1 6 6v5" />
+    </Icone>
+  );
+}
+
+function Lapis() {
+  return (
+    <Icone>
+      <path d="M4 20h4L20 8a2.83 2.83 0 0 0-4-4L4 16v4Z" />
+      <path d="m14.5 5.5 4 4" />
+    </Icone>
+  );
+}
+
+function Lixeira() {
+  return (
+    <Icone>
+      <path d="M4 7h16" />
+      <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+      <path d="M6 7v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7" />
+      <path d="M10 11v6M14 11v6" />
+    </Icone>
+  );
+}
+
+/** Só o feedback de "a action está voltando" — o botão já desativa sozinho. */
+function Girando() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-4 w-4 shrink-0 animate-spin">
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity={0.25} strokeWidth={2.5} />
+      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/* Botões: 40px de altura (o alvo de toque mínimo comfortable), contorno só no
+   foco, e o cinza de `hover` é `superficie-2` — `superficie` é quase branco e
+   some dentro de um card branco. */
+const base = "inline-flex h-10 items-center justify-center rounded-logo text-sm font-semibold transition-colors";
+const fantasma = "text-texto-suave hover:bg-superficie-2 hover:text-texto-forte";
+
 function Botao({
   children,
   onClick,
+  rotulo,
   titulo,
   desativado,
+  className,
 }: {
   children: ReactNode;
   onClick: () => void;
-  titulo: string;
+  rotulo: string;
+  titulo?: string;
   desativado?: boolean;
+  className?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={desativado}
-      title={titulo}
-      className="grid h-9 w-9 place-items-center rounded-logo text-sm text-texto-suave transition-colors hover:bg-superficie hover:text-marca-800 disabled:opacity-30 disabled:hover:bg-transparent"
+      title={titulo ?? rotulo}
+      aria-label={rotulo}
+      className={cn(
+        base,
+        fantasma,
+        className,
+        // Sem `pointer-events-none`: o botão desativado ainda precisa do `title`
+        // para explicar por que a seta não sobe. O que não pode é o fundo de
+        // hover, que sugeriria clique possível.
+        "disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-texto-suave",
+      )}
     >
       {children}
     </button>
   );
 }
 
-/** Mesmo desenho do `Botao`, mas submitting — é o que liga/desliga a linha. */
-function BotaoEnvio({ children, titulo }: { children: ReactNode; titulo: string }) {
+/**
+ * Liga/desliga em forma de interruptor, e não de ícone solto: o estado da
+ * categoria precisa ser lido de relance na lista, sem passar o mouse nem
+ * decorar o que o glifo significa. `role="switch"` + `aria-checked` anunciam
+ * o estado em leitor de tela; o texto visível faz parte do nome acessível,
+ * como manda a WCAG (label in name).
+ */
+function Interruptor({ ativo, nome }: { ativo: boolean; nome: string }) {
+  const { pending } = useFormStatus();
+  const rotulo = ativo ? "Ativa" : "Inativa";
+
   return (
     <button
       type="submit"
-      title={titulo}
-      className="grid h-9 w-9 place-items-center rounded-logo text-sm text-texto-suave transition-colors hover:bg-superficie hover:text-marca-800"
+      role="switch"
+      aria-checked={ativo}
+      disabled={pending}
+      title={
+        pending
+          ? "Salvando…"
+          : `${ativo ? "Desligar" : "Ligar"} ${nome} — ${
+              ativo ? "some do site" : "volta a aparecer no site"
+            }`
+      }
+      className={cn(
+        base,
+        "gap-2.5 border px-3",
+        ativo
+          ? "border-sucesso/40 bg-sucesso/10 text-sucesso-700 hover:bg-sucesso/15"
+          : "border-borda-forte bg-superficie text-texto-suave hover:bg-superficie-2 hover:text-texto-forte",
+        "disabled:opacity-70",
+      )}
     >
-      {children}
+      <span
+        aria-hidden="true"
+        className={cn(
+          "relative h-5 w-9 shrink-0 rounded-full transition-colors",
+          ativo ? "bg-sucesso" : "bg-borda-forte",
+        )}
+      >
+        <span
+          className={cn(
+            "absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+            ativo && "translate-x-4",
+          )}
+        />
+      </span>
+      {pending ? <Girando /> : null}
+      <span>{rotulo}</span>
+      <span className="sr-only">
+        {" "}
+        — {nome}: {pending ? "salvando" : ativo ? "desligar" : "ligar"}
+      </span>
     </button>
   );
 }
@@ -193,6 +329,45 @@ function Aviso({ children }: { children: ReactNode }) {
     >
       {children}
     </p>
+  );
+}
+
+/** Destrutivo fica longe do resto com um divisor: é o único vermelho da linha. */
+function BotaoExcluir({ nome }: { nome: string }) {
+  const { pending } = useFormStatus();
+
+  return (
+    <>
+      <span aria-hidden="true" className="hidden h-5 w-px bg-borda xs:block" />
+      <button
+        type="submit"
+        disabled={pending}
+        title={`Excluir ${nome}`}
+        className={cn(
+          base,
+          "gap-2 px-3 text-texto-suave hover:bg-erro/10 hover:text-erro-700 disabled:opacity-60",
+        )}
+      >
+        {pending ? <Girando /> : <Lixeira />}
+        {pending ? "Excluindo…" : "Excluir"}
+        <span className="sr-only"> {nome}</span>
+      </button>
+    </>
+  );
+}
+
+function BotaoSalvar() {
+  const { pending } = useFormStatus();
+
+  return (
+    <button
+      type="submit"
+      disabled={pending}
+      className="inline-flex min-h-11 items-center gap-2 rounded-pill bg-marca-gradient px-6 text-sm font-bold text-white disabled:opacity-60"
+    >
+      {pending ? <Girando /> : null}
+      {pending ? "Salvando…" : "Salvar"}
+    </button>
   );
 }
 
@@ -221,6 +396,7 @@ function Linha({
   const [editState, editar] = useActionState(updateCategory, inicial);
   const [apagarState, apagar] = useActionState(deleteCategory, inicial);
 
+  const principal = raizes.find((raiz) => raiz.id === no.parentId);
   const destacado = alvo?.id === no.id;
   const marca = destacado ? alvo.intencao : null;
 
@@ -257,88 +433,104 @@ function Linha({
         />
       ) : null}
 
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-1 sm:gap-2">
         <button
           type="button"
           {...attributes}
           {...listeners}
-          title="Arrastar para reordenar"
+          title={`Arrastar ${no.name} para reordenar`}
           aria-label={`Reordenar ${no.name}. Arraste ou use as setas.`}
-          className="-ml-1 mt-0.5 cursor-grab rounded p-1 text-texto-tenue transition-colors hover:text-marca-800 active:cursor-grabbing"
+          className="-ml-1 mt-1 grid h-10 w-8 shrink-0 cursor-grab place-items-center rounded-logo text-texto-tenue transition-colors hover:bg-superficie-2 hover:text-marca-800 active:cursor-grabbing"
         >
           <Alca />
         </button>
 
         <div className="min-w-0 flex-1">
-          <p className="flex flex-wrap items-center gap-2 text-sm font-bold text-texto-forte">
-            {no.name}
-            {!no.isActive ? (
-              <span className="rounded-pill bg-superficie-2 px-2 py-0.5 text-xs font-semibold text-texto-tenue">
-                inativa
-              </span>
-            ) : null}
-          </p>
-          <p className="mt-0.5 truncate text-xs text-texto-tenue">
-            /{no.slug} ·{" "}
-            {no.businessCount === 1 ? "1 empresa" : `${no.businessCount} empresas`}
+          <p className="flex flex-wrap items-baseline gap-x-2 text-sm font-bold">
+            <span className={no.isActive ? "text-texto-forte" : "text-texto-tenue"}>
+              {no.name}
+            </span>
+            <span className="break-all text-xs font-normal text-texto-tenue">
+              /{no.slug} ·{" "}
+              {no.businessCount === 1 ? "1 empresa" : `${no.businessCount} empresas`}
+            </span>
           </p>
 
-          <div className="mt-2 flex flex-wrap items-center gap-1">
-            <Botao
-              titulo="Subir"
-              onClick={() => onMover(no.id, -1)}
-              desativado={primeiro}
-            >
-              <span aria-hidden="true">↑</span>
-            </Botao>
-            <Botao
-              titulo="Descer"
-              onClick={() => onMover(no.id, 1)}
-              desativado={ultimo}
-            >
-              <span aria-hidden="true">↓</span>
-            </Botao>
+          {/* Três grupos com pesos diferentes: posição (setas coladas entre si,
+              uma ajeitada), estado (o interruptor) e destruição (isolado à
+              direita, atrás de um divisor, o único vermelho da linha). Sem
+              isso o "Excluir" ficava a um Tab das setas de reordenar. */}
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            <div className="flex items-center overflow-hidden rounded-logo border border-borda bg-white">
+              <Botao
+                className="w-10 rounded-none"
+                rotulo={`Subir ${no.name}`}
+                onClick={() => onMover(no.id, -1)}
+                desativado={primeiro}
+              >
+                <Chevron cima />
+              </Botao>
+              <span aria-hidden="true" className="h-5 w-px bg-borda" />
+              <Botao
+                className="w-10 rounded-none"
+                rotulo={`Descer ${no.name}`}
+                onClick={() => onMover(no.id, 1)}
+                desativado={ultimo}
+              >
+                <Chevron />
+              </Botao>
+            </div>
+
             {nivel === 1 ? (
               <Botao
-                titulo="Virar categoria principal"
+                className="w-10"
+                rotulo={
+                  principal
+                    ? `Tirar ${no.name} de dentro de ${principal.name} e deixar como categoria principal`
+                    : `Deixar ${no.name} como categoria principal`
+                }
                 onClick={() => onPromover(no.id)}
               >
-                <span aria-hidden="true">⇧</span>
-                <span className="sr-only">Virar categoria principal</span>
+                <SetaParaFora />
               </Botao>
             ) : null}
+
             <form action={toggleCategory}>
               <input type="hidden" name="id" value={no.id} />
-              <BotaoEnvio titulo={no.isActive ? "Desligar" : "Ligar"}>
-                <span aria-hidden="true">{no.isActive ? "◉" : "○"}</span>
-                <span className="sr-only">
-                  {no.isActive ? "Desligar" : "Ligar"} {no.name}
-                </span>
-              </BotaoEnvio>
+              <Interruptor ativo={no.isActive} nome={no.name} />
             </form>
+
             <button
               type="button"
               onClick={() => setEditando((v) => !v)}
               aria-expanded={editando}
-              className="h-9 rounded-logo px-3 text-sm font-semibold text-texto-suave transition-colors hover:bg-superficie hover:text-marca-800"
+              aria-controls={editando ? `edicao-${no.id}` : undefined}
+              className={cn(
+                base,
+                "gap-2 border px-3",
+                editando
+                  ? "border-marca-600/30 bg-marca-100 text-marca-800"
+                  : cn(fantasma, "border-borda bg-white hover:border-borda-forte"),
+              )}
             >
+              <Lapis />
               {editando ? "Fechar" : "Editar"}
             </button>
-            <form action={apagar} className="ml-auto">
+
+            <form action={apagar} className="ml-auto flex items-center gap-3">
               <input type="hidden" name="id" value={no.id} />
-              <button
-                type="submit"
-                className="h-9 rounded-logo px-3 text-sm font-semibold text-texto-suave transition-colors hover:bg-erro/10 hover:text-erro-700"
-              >
-                Excluir
-              </button>
+              <BotaoExcluir nome={no.name} />
             </form>
           </div>
 
           {apagarState.error ? <Aviso>{apagarState.error}</Aviso> : null}
 
           {editando ? (
-            <form action={editar} className="mt-4 space-y-3 border-t border-borda pt-4">
+            <form
+              id={`edicao-${no.id}`}
+              action={editar}
+              className="mt-4 space-y-3 border-t border-borda pt-4"
+            >
               <input type="hidden" name="id" value={no.id} />
               <div>
                 <label
@@ -408,12 +600,7 @@ function Linha({
 
               {editState.error ? <Aviso>{editState.error}</Aviso> : null}
 
-              <button
-                type="submit"
-                className="min-h-11 rounded-pill bg-marca-gradient px-6 text-sm font-bold text-white"
-              >
-                Salvar
-              </button>
+              <BotaoSalvar />
             </form>
           ) : null}
         </div>
@@ -432,6 +619,28 @@ function Cartao({ no }: { no: CategoryNode }) {
 }
 
 /**
+ * O que o servidor mandou, em uma string só. Serve de rede de segurança para o
+ * rascunho local do editor: enquanto a assinatura não mudar, o estado local
+ * manda (ordem durante o arrasto); quando muda, é porque uma action gravou no
+ * banco e a lista precisa ser reaceita.
+ */
+function assinaturaNos(nos: CategoryNode[]): string {
+  return nos
+    .map((no) =>
+      [
+        no.id,
+        no.parentId ?? "-",
+        no.name,
+        no.slug,
+        no.isActive ? "1" : "0",
+        no.businessCount,
+        no.imageUrl ?? "",
+      ].join("|"),
+    )
+    .join(",");
+}
+
+/**
  * Árvore de categorias do admin.
  *
  * A lista é plana e na ordem da tela: cada subcategoria vem colada na sua
@@ -441,11 +650,23 @@ function Cartao({ no }: { no: CategoryNode }) {
  */
 export function CategoryTree({ nos }: { nos: CategoryNode[] }) {
   const [ordem, setOrdem] = useState(nos);
+  const [assinatura, setAssinatura] = useState(() => assinaturaNos(nos));
   const [arrastando, setArrastando] = useState<number | null>(null);
   const [alvo, setAlvo] = useState<Alvo | null>(null);
   const [teclado, setTeclado] = useState(false);
   const idsRef = useRef<HTMLInputElement>(null);
   const paisRef = useRef<HTMLInputElement>(null);
+
+  // `useState(nos)` só lê o primeiro valor: sem isto a tela ficava presa na
+  // lista antiga depois de ligar, desligar, renomear ou excluir — o clique
+  // chegava ao banco, a action revalidava, e a linha continuava igual. É o
+  // ajuste de estado durante o render que o próprio React recomenda no lugar de
+  // um efeito, para não piscar um quadro com o dado velho.
+  const doServidor = assinaturaNos(nos);
+  if (doServidor !== assinatura) {
+    setAssinatura(doServidor);
+    setOrdem(nos);
+  }
 
   const sensores = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),

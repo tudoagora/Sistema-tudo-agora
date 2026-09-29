@@ -40,11 +40,8 @@ export default async function CategoriesAdminPage() {
     };
   });
 
-  // O editor guarda a ordem em estado; a chave remonta a árvore quando o banco
-  // muda (um `revalidate` depois de salvar), senão a tela continuaria
-  // mostrando a estrutura antiga.
-  const assinatura = nos.map((no) => `${no.parentId ?? "-"}>${no.id}`).join(",");
-
+  // O editor guarda a ordem em estado enquanto a tela não muda; quando uma
+  // action grava no banco, `CategoryTree` recebe a lista nova e troca a sua.
   return (
     <div className="mx-auto w-full max-w-4xl">
       <h1 className="text-2xl font-black tracking-tight text-marca-800">
@@ -62,7 +59,7 @@ export default async function CategoriesAdminPage() {
             Nenhuma categoria cadastrada.
           </p>
         ) : (
-          <CategoryTree key={assinatura} nos={nos} />
+          <CategoryTree nos={nos} />
         )}
       </div>
 
