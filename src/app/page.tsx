@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { Suspense } from "react";
 
-import { BusinessAvatar, BusinessCard } from "@/components/business-card";
+import { BusinessAvatar } from "@/components/business-card";
+import { BusinessGrid } from "@/components/business-grid";
 import { CategoryGrid } from "@/components/home/category-grid";
 import { GroupFilter } from "@/components/home/group-filter";
 import { HeroSlider, type HeroSlide } from "@/components/home/hero-slider";
@@ -152,13 +153,11 @@ export default async function HomePage(props: PageProps<"/">) {
             <strong className="text-marca-800">Todas</strong>.
           </p>
         ) : (
-          <ul className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {businesses.map((business) => (
-              <li key={business.id} className="h-full">
-                <BusinessCard business={business} citySlug={city.slug} />
-              </li>
-            ))}
-          </ul>
+          <BusinessGrid
+            businesses={businesses}
+            citySlug={city.slug}
+            className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+          />
         )}
       </section>
 

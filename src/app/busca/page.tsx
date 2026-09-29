@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { BusinessCard } from "@/components/business-card";
+import { BusinessGrid } from "@/components/business-grid";
 import { SearchBox } from "@/components/home/search-box";
 import { getCurrentCity } from "@/lib/city";
 import { searchBusinesses } from "@/lib/catalog";
@@ -57,13 +57,11 @@ export default async function SearchPage(props: PageProps<"/busca">) {
       ) : null}
 
       {hasQuery ? (
-        <ul className="mt-8 grid gap-4 sm:grid-cols-2">
-          {results.map((business) => (
-            <li key={business.id} className="h-full">
-              <BusinessCard business={business} citySlug={city.slug} />
-            </li>
-          ))}
-        </ul>
+        <BusinessGrid
+          businesses={results}
+          citySlug={city.slug}
+          className="mt-8 grid gap-4 sm:grid-cols-2"
+        />
       ) : null}
 
       {!query ? (

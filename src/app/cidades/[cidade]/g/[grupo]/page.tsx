@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { BusinessCard } from "@/components/business-card";
+import { BusinessGrid } from "@/components/business-grid";
 import {
   getCategoryBySlug,
   getCityBySlug,
@@ -84,13 +84,7 @@ export default async function GroupPage(
           Nenhuma empresa em {scope.name} aqui em {city.name} ainda.
         </p>
       ) : (
-        <ul className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {businesses.map((business) => (
-            <li key={business.id} className="h-full">
-              <BusinessCard business={business} citySlug={city.slug} />
-            </li>
-          ))}
-        </ul>
+        <BusinessGrid businesses={businesses} citySlug={city.slug} />
       )}
     </div>
   );
