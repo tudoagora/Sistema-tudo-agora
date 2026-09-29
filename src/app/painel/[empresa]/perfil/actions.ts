@@ -16,12 +16,6 @@ export type ProfileState = {
   fieldErrors: Record<string, string>;
 };
 
-export const emptyProfileState: ProfileState = {
-  error: null,
-  saved: false,
-  fieldErrors: {},
-};
-
 const phone = z
   .string()
   .trim()
