@@ -122,45 +122,6 @@ export default async function HomePage(props: PageProps<"/">) {
 
       <CategoryGrid groups={groups} citySlug={city.slug} counts={counts.groups} />
 
-      <section
-        id="descubra"
-        aria-labelledby="descubra-titulo"
-        className="mx-auto w-full max-w-6xl scroll-mt-20 px-4 py-6 lg:px-6"
-      >
-        <h2
-          id="descubra-titulo"
-          className="text-2xl font-black tracking-tight text-marca-800 sm:text-3xl"
-        >
-          Descubra empresas e serviços
-        </h2>
-        <p className="mt-1 text-sm text-texto-suave">
-          Empresas ativas em {city.name}.
-        </p>
-
-        <div className="mt-6">
-          <Suspense fallback={<div className="h-[6.5rem]" />}>
-            <GroupFilter
-              groups={groups}
-              subcategories={subcategories}
-              counts={{ groups: counts.groups, categories: counts.categories }}
-            />
-          </Suspense>
-        </div>
-
-        {businesses.length === 0 ? (
-          <p className="mt-10 rounded-card border border-dashed border-borda-forte bg-superficie p-10 text-center text-texto-suave">
-            Nenhuma empresa encontrada nesse filtro. Tente{" "}
-            <strong className="text-marca-800">Todas</strong>.
-          </p>
-        ) : (
-          <BusinessGrid
-            businesses={businesses}
-            citySlug={city.slug}
-            className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
-          />
-        )}
-      </section>
-
       {featured.length > 0 ? (
         <section
           aria-labelledby="em-alta-titulo"
@@ -200,6 +161,45 @@ export default async function HomePage(props: PageProps<"/">) {
           </ul>
         </section>
       ) : null}
+
+      <section
+        id="descubra"
+        aria-labelledby="descubra-titulo"
+        className="mx-auto w-full max-w-6xl scroll-mt-20 px-4 py-6 lg:px-6"
+      >
+        <h2
+          id="descubra-titulo"
+          className="text-2xl font-black tracking-tight text-marca-800 sm:text-3xl"
+        >
+          Descubra empresas e serviços
+        </h2>
+        <p className="mt-1 text-sm text-texto-suave">
+          Empresas ativas em {city.name}.
+        </p>
+
+        <div className="mt-6">
+          <Suspense fallback={<div className="h-[6.5rem]" />}>
+            <GroupFilter
+              groups={groups}
+              subcategories={subcategories}
+              counts={{ groups: counts.groups, categories: counts.categories }}
+            />
+          </Suspense>
+        </div>
+
+        {businesses.length === 0 ? (
+          <p className="mt-10 rounded-card border border-dashed border-borda-forte bg-superficie p-10 text-center text-texto-suave">
+            Nenhuma empresa encontrada nesse filtro. Tente{" "}
+            <strong className="text-marca-800">Todas</strong>.
+          </p>
+        ) : (
+          <BusinessGrid
+            businesses={businesses}
+            citySlug={city.slug}
+            className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+          />
+        )}
+      </section>
 
       <AnuncieCta />
     </>
