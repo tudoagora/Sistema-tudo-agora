@@ -191,14 +191,16 @@ export function FeaturedShowcase({
                       >
                         {business.categoryName ?? "Destaque"}
                       </span>
-                      <strong className="line-clamp-2 text-base leading-[1.15] font-black text-marca-900 sm:text-lg">
+                      {/* `min-h` reserva as duas linhas do nome e a linha da
+                          descrição mesmo quando o texto é curto ou não existe:
+                          é o que deixa toda ficha com a mesma altura, já que
+                          a faixa só pode rolar com cartões de tamanho igual. */}
+                      <strong className="line-clamp-2 min-h-[2.3em] text-base leading-[1.15] font-black text-marca-900 sm:text-lg">
                         {business.name}
                       </strong>
-                      {business.description ? (
-                        <span className="line-clamp-1 text-[11px] leading-relaxed text-texto-suave sm:text-xs">
-                          {business.description}
-                        </span>
-                      ) : null}
+                      <span className="line-clamp-1 min-h-[1.65em] text-[11px] leading-relaxed text-texto-suave sm:text-xs">
+                        {business.description ?? ""}
+                      </span>
                       <span className="mt-0.5 inline-flex w-max items-center gap-2 rounded-pill bg-marca-600 px-3 py-1.5 text-[10px] font-extrabold text-white transition-transform group-hover:-translate-y-0.5 sm:mt-1 sm:px-3.5 sm:py-2 sm:text-[11px]">
                         Ver empresa <span aria-hidden="true">→</span>
                       </span>
