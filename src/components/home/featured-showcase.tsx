@@ -7,7 +7,8 @@ import type { FeaturedBusiness } from "@/lib/catalog";
 
 /**
  * Seção "Destaques em {cidade}" da home — o showcase do site atual: um herói
- * escuro com a vitrine em destaque e duas fichas coloridas abaixo.
+ * escuro com a vitrine em destaque e, abaixo, uma faixa em movimento com as
+ * outras empresas (nome à esquerda, logo à direita, altura curta).
  *
  * O herói é sempre a empresa com cardápio disponível (`hasMenu` vem ordenado
  * assim de `listFeaturedBusinesses`), porque "Ver cardápio" vende mais que
@@ -122,10 +123,6 @@ export function FeaturedShowcase({
           aria-hidden="true"
           className="absolute -right-24 -top-28 -z-10 h-[410px] w-[410px] rounded-full bg-marca-700/50"
         />
-        <span
-          aria-hidden="true"
-          className="-bottom-56 right-10 -z-10 hidden h-[390px] w-[390px] rounded-full bg-marca-600/40 sm:block"
-        />
 
         <span className="relative z-10 flex max-w-[67%] flex-col items-start gap-2.5 sm:max-w-[62%] sm:gap-3">
           <span className="inline-block rounded-pill bg-marca-100 px-3 py-1.5 text-[9px] font-extrabold tracking-[0.03em] text-marca-900 sm:px-4 sm:py-2 sm:text-[11px]">
@@ -158,50 +155,82 @@ export function FeaturedShowcase({
       </Link>
 
       {tiles.length > 0 ? (
-        <ul className="mt-4 grid gap-3 sm:grid-cols-2 sm:gap-[18px]">
-          {tiles.map((business, index) => {
-            const tone = TILE_TONES[index % TILE_TONES.length];
+        /* Faixa em movimento: as mesmas fichas duas vezes seguidas, porque o
+           deslocamento de -50% só fecha o laço sem salto com o passe repetido.
+           O espaçamento é `pr` no item (e não `gap` na lista) pelo mesmo
+           motivo — o `gap` não entraria na conta do -50%. Quem prefere menos
+           movimento (`motion-reduce`) recebe a lista quebrando em linhas.
+           O `overflow-hidden` do wrapper é o que impede a faixa, que é mais
+           larga que a tela, de criar rolagem horizontal na página. */
+        <div className="mt-4 overflow-hidden">
+          <ul
+            aria-label="Mais empresas em destaque"
+            className="flex w-max animate-marquee hover:[animation-play-state:paused] motion-reduce:w-full motion-reduce:flex-wrap motion-reduce:gap-3 motion-reduce:animate-none"
+          >
+            {[...tiles, ...tiles].map((business, index) => {
+              const tone =
+                TILE_TONES[index % tiles.length % TILE_TONES.length];
+              // A segunda cópia é só preenchimento visual: some da árvore
+              // acessível e do teclado para não duplicar nome/link.
+              const repeat = index >= tiles.length;
 
-            return (
-              <li key={business.id}>
-                <Link
-                  href={`/cidades/${citySlug}/empresa/${business.slug}`}
-                  className={`group flex min-h-[143px] items-center justify-between overflow-hidden rounded-card p-4 transition-shadow hover:shadow-card-hover sm:min-h-[185px] sm:p-6 ${tone.card}`}
+              return (
+                <li
+                  key={`${business.id}-${repeat ? "repete" : "original"}`}
+                  className="shrink-0 pr-3 sm:pr-4 motion-reduce:pr-0"
                 >
-                  <span className="relative z-10 flex max-w-[70%] flex-col items-start gap-2 sm:gap-2.5">
-                    <span
-                      className={`text-[10px] font-extrabold tracking-[0.03em] uppercase ${tone.kicker}`}
-                    >
-                      {business.categoryName ?? "Destaque"}
+                  <Link
+                    href={`/cidades/${citySlug}/empresa/${business.slug}`}
+                    aria-hidden={repeat || undefined}
+                    tabIndex={repeat ? -1 : undefined}
+                    className={`group flex w-[268px] items-center justify-between gap-3 overflow-hidden rounded-card p-4 transition-shadow hover:shadow-card-hover sm:w-[360px] sm:gap-4 sm:p-5 ${tone.card}`}
+                  >
+                    <span className="flex min-w-0 flex-col items-start gap-1 sm:gap-1.5">
+                      <span
+                        className={`text-[9px] font-extrabold tracking-[0.03em] uppercase sm:text-[10px] ${tone.kicker}`}
+                      >
+                        {business.categoryName ?? "Destaque"}
+                      </span>
+                      <strong className="line-clamp-2 text-base leading-[1.15] font-black text-marca-900 sm:text-lg">
+                        {business.name}
+                      </strong>
+                      {business.description ? (
+                        <span className="line-clamp-1 text-[11px] leading-relaxed text-texto-suave sm:text-xs">
+                          {business.description}
+                        </span>
+                      ) : null}
+                      <span className="mt-0.5 inline-flex w-max items-center gap-2 rounded-pill bg-marca-600 px-3 py-1.5 text-[10px] font-extrabold text-white transition-transform group-hover:-translate-y-0.5 sm:mt-1 sm:px-3.5 sm:py-2 sm:text-[11px]">
+                        Ver empresa <span aria-hidden="true">→</span>
+                      </span>
                     </span>
-                    <strong className="text-lg leading-[1.15] font-black text-marca-900 sm:text-2xl">
-                      {business.name}
-                    </strong>
-                    {business.description ? (
-                      <span className="line-clamp-2 text-xs leading-relaxed text-texto-suave sm:text-[13px]">
-                        {business.description}
+
+                    {/* Só a logo que a empresa subiu: as iniciais do lugar
+                        ficavam corteadas no círculo e ocupavam metade da
+                        ficha. */}
+                    {business.logoUrl ? (
+                      <span
+                        aria-hidden="true"
+                        className="grid h-[62px] w-[62px] shrink-0 place-items-center overflow-hidden rounded-full bg-white/70 sm:h-[78px] sm:w-[78px]"
+                      >
+                        <Image
+                          src={business.logoUrl}
+                          alt=""
+                          width={78}
+                          height={78}
+                          className="h-full w-full object-contain"
+                          unoptimized={
+                            business.logoUrl.startsWith("http://127.0.0.1") ||
+                            business.logoUrl.startsWith("http://localhost")
+                          }
+                        />
                       </span>
                     ) : null}
-                    <span className="mt-1 inline-flex w-max items-center gap-3 rounded-pill bg-marca-600 px-3.5 py-2 text-[11px] font-extrabold text-white transition-transform group-hover:-translate-y-0.5 sm:mt-3 sm:px-4 sm:py-2.5 sm:text-[13px]">
-                      Ver empresa <span aria-hidden="true">→</span>
-                    </span>
-                  </span>
-
-                  <span
-                    aria-hidden="true"
-                    className="ml-1 grid h-[94px] w-[94px] shrink-0 place-items-center overflow-hidden rounded-full bg-white/70 sm:ml-2.5 sm:h-[126px] sm:w-[126px]"
-                  >
-                    <ShowcaseArt
-                      name={business.name}
-                      logoUrl={business.logoUrl}
-                      size={126}
-                    />
-                  </span>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       ) : null}
     </section>
   );

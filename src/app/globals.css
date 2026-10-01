@@ -82,6 +82,19 @@
   --animate-filtro-entra: filtro-entra 220ms cubic-bezier(0.22, 1, 0.36, 1)
     both;
   --animate-filtro-sai: filtro-sai 160ms cubic-bezier(0.4, 0, 1, 1) both;
+  /* Faixa de empresas em movimento (vitrine da home). O deslocamento é de -50%
+     porque a lista é renderizada duas vezes: o final do 2º passe encosta
+     exatamente no começo do 1º, então o laço não dá salto. */
+  --animate-marquee: marquee 26s linear infinite;
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
 }
 
 @keyframes aviso-entra {

@@ -91,8 +91,8 @@ export default async function HomePage(props: PageProps<"/">) {
       activeGroup ? [activeGroup] : null,
       { categorySlugs: activeCategory ? [activeCategory] : null },
     ),
-    // 1 herói + 2 fichas: é o que o showcase da home desenha.
-    listFeaturedBusinesses(city.id, 3),
+    // 1 herói + 3 fichas: é o que o showcase da home desenha.
+    listFeaturedBusinesses(city.id, 4),
   ]);
 
   // O "Ver cardápio" do herói vai direto na vitrine `/cardapio/{slug}`, que
