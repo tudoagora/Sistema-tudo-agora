@@ -51,6 +51,50 @@ const MENSAGENS: Record<`${"erro" | "feito"}-${string}`, AdminFlash> = {
     mensagem: "Oferta excluída.",
   },
 
+  // Usuários
+  "feito-usuario-criado": {
+    tone: "ok",
+    mensagem: "Conta criada. A senha é a que você digitou.",
+  },
+  "feito-usuario-salvo": {
+    tone: "ok",
+    mensagem: "Usuário atualizado.",
+  },
+  "feito-usuario-removido": {
+    tone: "ok",
+    mensagem: "Usuário removido.",
+  },
+  "erro-salvar-usuario": {
+    tone: "erro",
+    mensagem: "Não foi possível salvar o usuário. Tente de novo.",
+  },
+  "erro-remover-usuario": {
+    tone: "erro",
+    mensagem: "Não foi possível remover o usuário.",
+  },
+  "erro-usuario-inexistente": {
+    tone: "erro",
+    mensagem: "O usuário não existe mais.",
+  },
+  "erro-proprio-papel": {
+    tone: "erro",
+    mensagem: "Você não pode tirar o próprio acesso de admin.",
+  },
+  "erro-cliente-com-empresa": {
+    tone: "erro",
+    mensagem:
+      "Para vincular uma empresa, o usuário precisa ser lojista — não cliente.",
+  },
+  "erro-ultimo-admin": {
+    tone: "erro",
+    mensagem:
+      "Este é o único admin do sistema. Promova outra conta antes de tirar este acesso.",
+  },
+  "erro-proprio-conta": {
+    tone: "erro",
+    mensagem: "Você não pode remover a própria conta por aqui.",
+  },
+
   // Planos
   "erro-salvar-plano": {
     tone: "erro",

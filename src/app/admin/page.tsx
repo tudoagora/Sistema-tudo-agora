@@ -88,6 +88,7 @@ export default async function AdminDashboard() {
             { href: "/admin/cidades", label: "Cadastrar cidade", hint: "abrir novas praças" },
             { href: "/admin/planos", label: "Planos e preços", hint: "o que a landing vende" },
             { href: "/admin/ofertas", label: "Ofertas e banners", hint: "campanhas e destaques" },
+            { href: "/admin/usuarios", label: "Usuários", hint: "papel, senha e vínculo de lojista" },
           ] as const).map((action) => (
             <li key={action.href}>
               <Link
