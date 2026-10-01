@@ -5,7 +5,8 @@ import { requireAdmin } from "@/lib/auth";
 import type { AdminFlashParams } from "@/lib/admin-flash";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { deleteUser, updateUser } from "./actions";
+import { updateUser } from "./actions";
+import { DeleteUserButton } from "./delete-user-button";
 import { MEMBER_ROLE_LABELS, ROLE_LABELS } from "./state";
 import { UserForm } from "./user-form";
 
@@ -245,16 +246,11 @@ export default async function UsuariosAdminPage(
                 </button>
               </form>
 
-              <form action={deleteUser} className="mt-3">
-                <input type="hidden" name="id" value={row.id} />
-                <button
-                  type="submit"
-                  disabled={isSelf}
-                  className="min-h-11 rounded-pill border border-borda-forte px-5 text-sm font-semibold text-texto-suave transition-colors hover:border-erro hover:text-erro-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-borda-forte disabled:hover:text-texto-suave"
-                >
-                  Remover conta
-                </button>
-              </form>
+              <DeleteUserButton
+                userId={row.id}
+                userName={row.full_name || "usuário sem nome"}
+                disabled={isSelf}
+              />
             </li>
           );
         })}
