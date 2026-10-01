@@ -43,12 +43,11 @@ export default async function LoginPage(props: PageProps<"/entrar">) {
       <LoginForm next={next} />
       <p className="mt-6 text-center text-xs text-texto-tenue">
         Ainda não tem conta?{" "}
-        <a href="/cadastro" className="font-semibold text-marca-600 underline">
-          Criar conta
-        </a>{" "}
-        ou{" "}
-        <a href="/planos" className="font-semibold text-marca-600 underline">
-          anuncie sua empresa
+        <a
+          href="/planos"
+          className="font-semibold text-marca-600 underline"
+        >
+          Anuncie sua empresa
         </a>
       </p>
     </div>
