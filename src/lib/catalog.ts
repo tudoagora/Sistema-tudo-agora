@@ -49,6 +49,12 @@ export type BusinessCard = {
   hasMenu: boolean;
 };
 
+/** Card de destaque: o `BusinessCard` mais o kicker do showcase da home. */
+export type FeaturedBusiness = BusinessCard & {
+  /** Nome da categoria principal — vira o "kicker" acima do nome. */
+  categoryName: string | null;
+};
+
 export type Business = Row & {
   citySlug: string;
   cityName: string;
@@ -227,30 +233,64 @@ export const listBusinesses = cache(
   },
 );
 
+/**
+ * Destaques da home ("Destaques em {cidade}"). Além do card, o showcase usa
+ * `categoryName` no kicker e `hasMenu` para escolher quem ocupa o herói: a
+ * vitrine é o CTA mais forte que existe, então uma empresa com cardápio
+ * disponível entra na frente das outras (o `.sort` é estável, então não mexe
+ * na ordem entre as empresas que empatam).
+ */
 export const listFeaturedBusinesses = cache(
-  async (cityId: number, limit = 4): Promise<BusinessCard[]> => {
+  async (cityId: number, limit = 3): Promise<FeaturedBusiness[]> => {
     const supabase = await createClient();
     const { data, error } = await supabase
       .from("businesses")
       .select(
-        "id, name, slug, custom_slug, description, logo_url, cities!inner(slug)",
+        `id, name, slug, custom_slug, description, logo_url,
+         cities!inner(slug),
+         business_categories(is_primary, categories!inner(name))`,
       )
       .eq("city_id", cityId)
       .eq("status", "active")
       .or(
         `is_featured.eq.true,and(featured_until.is.null,featured_until.gt.${new Date().toISOString()})`,
       )
-      .order("is_featured", { ascending: false })
+      // `businesses` não tem `sort_order` — quem decide a ordem manual é o
+      // admin, e até hoje ele não tem campo para isso. Ordenar pelo nome deixa
+      // a vitrine estável entre renders (o Postgres não garante ordem sem
+      // `order by`), e o `.sort` por `hasMenu` logo abaixo escolhe o herói.
+      .order("name", { ascending: true })
       .limit(limit);
 
     if (error) throw new Error(`listFeaturedBusinesses: ${error.message}`);
 
     const rows = (data ?? []) as unknown as Record<string, unknown>[];
-    return rows.map((row) => {
+    const cards = rows.map((row) => {
       const card = toCard(row, "");
       const city = unwrap<{ slug: string }>(row.cities);
-      return { ...card, citySlug: city?.slug ?? "" };
+      const links = unwrapAll<{
+        is_primary: boolean;
+        categories: unknown;
+      }>(row.business_categories);
+
+      let categoryName: string | null = null;
+      for (const link of links) {
+        const cat = unwrap<{ name: string }>(link.categories);
+        if (!cat) continue;
+        // A principal ganha o kicker; na falta dela serve qualquer categoria.
+        if (link.is_primary || !categoryName) categoryName = cat.name;
+      }
+
+      return { ...card, citySlug: city?.slug ?? "", categoryName };
     });
+
+    const menus = await Promise.all(
+      cards.map((card) => countMenuItems(supabase, card.id)),
+    );
+
+    return cards
+      .map((card, index) => ({ ...card, hasMenu: menus[index] > 0 }))
+      .sort((a, b) => Number(b.hasMenu) - Number(a.hasMenu));
   },
 );
 

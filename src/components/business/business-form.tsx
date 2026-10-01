@@ -500,7 +500,7 @@ export function BusinessForm({
               name="isFeatured"
               value="on"
               checked={defaults?.isFeatured}
-              text="Destacar em Em alta"
+              text="Destacar em Destaques"
             />
           ) : null}
           <CheckPill

@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { Suspense } from "react";
 
-import { BusinessAvatar } from "@/components/business-card";
 import { BusinessGrid } from "@/components/business-grid";
 import { CategoryGrid } from "@/components/home/category-grid";
+import { FeaturedShowcase } from "@/components/home/featured-showcase";
 import { GroupFilter } from "@/components/home/group-filter";
 import { HeroSlider, type HeroSlide } from "@/components/home/hero-slider";
 import { LiveSearch } from "@/components/home/search-box";
@@ -13,6 +13,7 @@ import {
   listFeaturedBusinesses,
   listGroups,
   listSubcategories,
+  resolveStorefrontSlug,
   type Group,
 } from "@/lib/catalog";
 import { getCurrentCity } from "@/lib/city";
@@ -90,8 +91,17 @@ export default async function HomePage(props: PageProps<"/">) {
       activeGroup ? [activeGroup] : null,
       { categorySlugs: activeCategory ? [activeCategory] : null },
     ),
-    listFeaturedBusinesses(city.id, 4),
+    // 1 herói + 2 fichas: é o que o showcase da home desenha.
+    listFeaturedBusinesses(city.id, 3),
   ]);
+
+  // O "Ver cardápio" do herói vai direto na vitrine `/cardapio/{slug}`, que
+  // só existe quando o slug é alcançável (`custom_slug` ou slug único).
+  const hero = featured[0];
+  const heroMenuSlug =
+    hero && hero.hasMenu
+      ? await resolveStorefrontSlug(hero.customSlug, hero.slug)
+      : null;
 
   return (
     <>
@@ -122,45 +132,12 @@ export default async function HomePage(props: PageProps<"/">) {
 
       <CategoryGrid groups={groups} citySlug={city.slug} counts={counts.groups} />
 
-      {featured.length > 0 ? (
-        <section
-          aria-labelledby="em-alta-titulo"
-          className="mx-auto w-full max-w-6xl px-4 py-14 lg:px-6"
-        >
-          <h2
-            id="em-alta-titulo"
-            className="text-2xl font-black tracking-tight text-marca-800 sm:text-3xl"
-          >
-            Em alta
-          </h2>
-          <p className="mt-1 text-sm text-texto-suave">
-            Empresas em destaque na cidade selecionada.
-          </p>
-          <ul className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {featured.map((business) => (
-              <li key={business.id}>
-                <article className="group flex h-full items-center gap-3 rounded-card border border-borda bg-white p-4 shadow-card transition-shadow hover:shadow-card-hover">
-                  <BusinessAvatar
-                    name={business.name}
-                    logoUrl={business.logoUrl}
-                    size={56}
-                  />
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-bold text-marca-800">
-                      {business.name}
-                    </span>
-                    {business.description ? (
-                      <span className="mt-0.5 block line-clamp-2 text-xs text-texto-suave">
-                        {business.description}
-                      </span>
-                    ) : null}
-                  </span>
-                </article>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+      <FeaturedShowcase
+        businesses={featured}
+        cityName={city.name}
+        citySlug={city.slug}
+        heroMenuHref={heroMenuSlug ? `/cardapio/${heroMenuSlug}` : null}
+      />
 
       <section
         id="descubra"

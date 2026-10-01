@@ -3,6 +3,21 @@ import Link from "next/link";
 
 import type { BusinessCard as BusinessCardData } from "@/lib/catalog";
 
+/**
+ * Iniciais do placeholder de logo — primeira letra, ou as duas primeiras
+ * palavras com 3+ letras (`Society Beer` -> `SB`).
+ */
+export function initialsFromName(name: string): string {
+  const initials = name
+    .split(/\s+/)
+    .filter((word) => word.length > 2)
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase() ?? "")
+    .join("");
+
+  return initials || name.charAt(0).toUpperCase();
+}
+
 /** Avatar com iniciais — usado enquanto a empresa não tem logo no Storage. */
 export function BusinessAvatar({
   name,
@@ -29,20 +44,13 @@ export function BusinessAvatar({
     );
   }
 
-  const initials = name
-    .split(/\s+/)
-    .filter((word) => word.length > 2)
-    .slice(0, 2)
-    .map((word) => word[0]?.toUpperCase() ?? "")
-    .join("");
-
   return (
     <span
       aria-hidden="true"
       className={`grid shrink-0 place-items-center rounded-logo bg-marca-100 font-bold text-marca-800 ${className}`}
       style={{ width: size, height: size, fontSize: Math.round(size / 2.8) }}
     >
-      {initials || name.charAt(0).toUpperCase()}
+      {initialsFromName(name)}
     </span>
   );
 }
