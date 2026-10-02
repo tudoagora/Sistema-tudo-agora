@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useRef } from "react";
 
 import {
   createBusiness,
@@ -183,8 +183,19 @@ export function BusinessForm({
 
   const error = (key: string) => state.fieldErrors[key];
 
+  const formRef = useRef<HTMLFormElement>(null);
+
+  const handleSubmit = () => {
+    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
-    <form action={formAction} className="space-y-6">
+    <form
+      ref={formRef}
+      action={formAction}
+      onSubmit={handleSubmit}
+      className="space-y-6"
+    >
       {id ? (
         <input type="hidden" name="businessId" value={id} />
       ) : null}
