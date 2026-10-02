@@ -9,7 +9,8 @@ import { businessStatusSchema } from "@/lib/business-status";
 import { hoursFromEntries } from "@/lib/format";
 import { digitsOnly, normalizeSubdomain, slugify } from "@/lib/slug";
 import { createClient } from "@/lib/supabase/server";
-import type { BusinessFormState, CategoryState } from "./state";
+import { normalizeExternalUrl } from "@/lib/url";
+import type { BusinessFormState, CategoryState, MenuLinkState } from "./state";
 
 const FULFILLMENTS = ["delivery", "pickup"] as const;
 const PAYMENTS = ["pix", "dinheiro", "cartao_entrega", "cartao_online"] as const;
@@ -48,6 +49,66 @@ export async function publishBusiness(formData: FormData) {
   revalidatePath("/admin/empresas");
   revalidatePath("/");
   revalidatePath("/loja");
+}
+
+const menuUrlSchema = z.object({
+  id: z.coerce.number().int().positive("Empresa inválida."),
+  menuUrl: z.string().trim().max(500, "Link longo demais."),
+});
+
+/**
+ * Grava — ou apaga — o cardápio de fora da empresa.
+ *
+ * Action separada do `updateBusiness` porque o link mora no cartão "Cardápio"
+ * da lateral, com um botão próprio. Se entrasse no formulário grande, salvar
+ * qualquer outro campo da empresa reescreveria `menu_url` a partir de um
+ * campo que esse formulário nem tem, e o link sumiria sozinho.
+ *
+ * Campo vazio é "sem cardápio de fora", e é assim que a página pública volta a
+ * mostrar só o WhatsApp.
+ */
+export async function saveBusinessMenuUrl(
+  _prev: MenuLinkState,
+  formData: FormData,
+): Promise<MenuLinkState> {
+  await requireAdmin();
+
+  const parsed = menuUrlSchema.safeParse({
+    id: formData.get("id"),
+    menuUrl: formData.get("menuUrl") ?? "",
+  });
+
+  if (!parsed.success) {
+    return {
+      error: parsed.error.issues[0]?.message ?? "Confira o link.",
+      saved: false,
+    };
+  }
+
+  const menuUrl = normalizeExternalUrl(parsed.data.menuUrl);
+  // `normalizeExternalUrl` devolve `null` em dois casos que precisam de
+  // respostas diferentes: campo vazio (que é o certo) e link com esquema
+  // inválido (`javascript:alert(1)`, que não é). Sem esta distinção o segundo
+  // viraria "campo vazio" e apagaria o link sem dizer nada.
+  if (menuUrl === null && parsed.data.menuUrl !== "") {
+    return {
+      error: "Cole um link começando com http:// ou https://.",
+      saved: false,
+    };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("businesses")
+    .update({ menu_url: menuUrl })
+    .eq("id", parsed.data.id);
+
+  if (error) return { error: error.message, saved: false };
+
+  revalidatePath("/admin/empresas");
+  revalidatePath(`/admin/empresas/${parsed.data.id}`);
+  revalidatePath(`/cidades/[cidade]/empresa/[slug]`, "page");
+  return { error: null, saved: true };
 }
 
 const schema = z.object({

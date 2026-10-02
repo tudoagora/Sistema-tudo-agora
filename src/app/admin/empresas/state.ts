@@ -39,3 +39,19 @@ export type CategoryState = {
 };
 
 export const emptyCategoryState: CategoryState = { error: null, saved: false };
+
+/**
+ * Estado do campo de cardápio de fora (cartão "Cardápio" da lateral).
+ *
+ * Não usa `BusinessFormState` de propósito: o link é gravado por uma action
+ * só dele, no cartão do admin, e não pelo formulário grande da empresa. Se
+ * entrasse no `BusinessForm`, salvar o nome da loja apagaria o link — o
+ * `updateBusiness` reescreve a linha com a lista inteira de colunas e
+ * `menu_url` não está nessa lista.
+ */
+export type MenuLinkState = {
+  error: string | null;
+  saved: boolean;
+};
+
+export const emptyMenuLinkState: MenuLinkState = { error: null, saved: false };

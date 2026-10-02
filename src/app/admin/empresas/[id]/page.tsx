@@ -9,6 +9,7 @@ import type { OpeningHours } from "@/lib/format";
 import { createClient } from "@/lib/supabase/server";
 import { deleteBusiness, publishBusiness } from "../actions";
 import { CategoryToggle } from "./category-toggle";
+import { MenuLinkField } from "./menu-link";
 
 export const metadata: Metadata = { title: "Editar empresa" };
 
@@ -150,6 +151,10 @@ export default async function EditBusinessPage(props: PageProps<"/admin/empresas
             >
               Gerenciar cardápio
             </Link>
+            <MenuLinkField
+              businessId={business.id}
+              menuUrl={business.menu_url}
+            />
           </section>
 
           <section className="rounded-card border border-erro/25 bg-erro/5 p-5">

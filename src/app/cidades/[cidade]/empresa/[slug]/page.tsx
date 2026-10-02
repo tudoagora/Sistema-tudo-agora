@@ -20,6 +20,7 @@ import {
   whatsappLink,
   type OpeningHours,
 } from "@/lib/format";
+import { safeExternalUrl } from "@/lib/url";
 
 export async function generateMetadata(
   props: PageProps<"/cidades/[cidade]/empresa/[slug]">,
@@ -66,6 +67,11 @@ export default async function BusinessPage(
         `Olá! Vim pelo Tudo Agora e gostaria de falar sobre ${business.name}.`,
       )
     : null;
+  // Cardápio de fora (migration 00014). Sai `null` se a empresa não tiver um,
+  // e também se o que está no banco não for http(s) — o `href` é o único
+  // lugar do app onde texto de terceiro vira código, então o filtro é na
+  // renderização e não só na gravação.
+  const menuExterno = safeExternalUrl(business.menu_url);
   const hours = formatOpeningHours(business.opening_hours as OpeningHours);
   const open = isOpenNow(
     business.opening_hours as OpeningHours,
@@ -106,7 +112,25 @@ export default async function BusinessPage(
             Falar no WhatsApp
           </a>
         ) : null}
-        {storefrontHref ? (
+        {/*
+          Um destino só para o botão de cardápio, nesta ordem: o link que o
+          cliente cadastrou, a vitrine do próprio site, ou a âncora para a
+          lista que já está abaixo. Quando existe cardápio de fora E itens
+          publicados, quem fica sem botão é a vitrine — ela continua a um
+          clique, no cabeçalho da seção "Cardápio" mais embaixo. O contrário
+          (dois botões de cardápio lado a lado) só geraria dúvida sobre qual
+          é o cardápio certo.
+        */}
+        {menuExterno ? (
+          <a
+            href={menuExterno}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex min-h-11 items-center rounded-pill bg-marca-gradient px-5 text-sm font-bold text-white"
+          >
+            Ver cardápio
+          </a>
+        ) : storefrontHref ? (
           <Link
             href={storefrontHref}
             className="inline-flex min-h-11 items-center rounded-pill bg-marca-gradient px-5 text-sm font-bold text-white"
@@ -207,6 +231,25 @@ export default async function BusinessPage(
             citySlug={city.slug}
             canOrderOnline={Boolean(storefrontHref)}
           />
+        ) : menuExterno ? (
+          /*
+           * Sem item publicado, mas com link cadastrado: o texto antigo
+           * ("ainda não publicou um cardápio online") seria mentira — o
+           * cardápio existe, só está em outro lugar.
+           */
+          <div className="mt-4 rounded-card border border-dashed border-borda-forte bg-superficie p-8 text-center">
+            <p className="text-texto-suave">
+              O cardápio desta empresa fica fora do Tudo Agora.
+            </p>
+            <a
+              href={menuExterno}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-4 inline-flex min-h-11 items-center justify-center rounded-pill bg-marca-gradient px-6 text-sm font-bold text-white"
+            >
+              Abrir o cardápio
+            </a>
+          </div>
         ) : (
           <p className="mt-4 rounded-card border border-dashed border-borda-forte bg-superficie p-8 text-center text-texto-suave">
             Esta empresa ainda não publicou um cardápio online. Fale com ela pelo

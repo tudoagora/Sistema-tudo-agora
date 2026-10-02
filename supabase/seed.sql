@@ -207,6 +207,128 @@ values (1, 'Cadastro pendente de revisão (WP #2132)', 'cadastro-pendente-2132',
         'Título corrompido na origem — requer confirmação do lojista.', 2132, 'principal', 'draft')
 on conflict (city_id, slug) do nothing;
 
+-- ---------- CARDÁPIO DE FORA DAS EMPRESAS ----------
+--
+-- `menu_url` (migration 00014) é o link para onde o cliente sai do site quando a
+-- empresa vende em outro lugar: app de delivery, site próprio, grupo ou
+-- conversa de WhatsApp. Este bloco tem que ficar DEPOIS do insert das empresas
+-- acima — e é por isso que a carga não está na migration: num
+-- `supabase db reset` as migrations rodam antes do seed, e um `update` desta
+-- tabela dentro da migration não acharia empresa nenhuma.
+--
+-- O casamento é pelo NOME, e não pelo id: os ids são da base de produção e um
+-- reset local numera diferente, enquanto o nome é o que o admin reconhece na
+-- tela. Os 22 nomes abaixo foram conferidos um a um contra
+-- `select id, name from businesses` no cloud (54 linhas, todos distintos) e
+-- batem com os nomes deste arquivo.
+--
+-- As linhas da planilha "Loja/Empresa x Link1" que NÃO entraram aqui são duas
+-- por não existir empresa com esse nome na base (virar cadastro novo é coisa do
+-- admin):
+--
+--   Grupo OFC (Tapurah) MT  https://chat.whatsapp.com/Hs1eY1ZkZ7m4173Yut72LM?s=cl&p=a&mlu=4&ilr=4
+--   Polícia Civil            https://wa.me/5566999945815?text=...
+--
+-- ...e três por apontarem para o site antigo, explicadas no fim deste bloco.
+--
+-- Diferenças de grafia entre a planilha e o banco, resolvidas para o nome que
+-- está no banco: "Açaíteria e Pastelaria Palmeiras" (planilha: "Aiçaíteria"),
+-- "Hospital Municipal de Tapurah" (planilha: "Hospital Tapurah"), "Makariê
+-- Pizzaria e Choperia" (planilha: "Makarê"), "Plesnergóis" (planilha:
+-- "Plesnergás"). "TV Buritis (reportagem)" na planilha é a empresa 24, "TV
+-- Buritis" — o parênteses era anotação da planilha, não parte do nome.
+--
+-- Muitos dos links são wa.me/chat.whatsapp.com.
+--
+-- Três linhas da planilha apontavam para o host antigo do projeto
+-- (tudoagora-app-br-950721.hostingersite.com) e NÃO entraram aqui. Trocar o
+-- host pelo domínio atual não produz link melhor em nenhum dos três:
+--
+--   Master Farma       a URL era a vitrine (masterfarma.<host-antigo>/). Não há
+--                      produto nenhum cadastrado no cardápio desta empresa, então
+--                      /cardapio/masterfarma abriria uma vitrine vazia.
+--   Sabor da Itália    a URL era /cardapio/?loja=2172, um id do site antigo. A
+--                      empresa tem cardápio nativo funcionando (é o único cardápio
+--                      real do site), e gravar a própria vitrine no menu_url só
+--                      trocaria o botão "Pedir online" por "Ver cardápio" abrindo a
+--                      mesma página em outra aba.
+--   Tapurah.com        a URL era a própria página da empresa
+--      (.../empresa/tapurah-com/). Trocar o host deixaria o botão "Ver cardápio"
+--      apontando para a página que o cliente já está vendo.
+--
+-- Preferimos o campo vazio a um botão que abre a página vazia, a própria página
+-- ou um id que não existe mais. As três empresas continuam sem cardápio externo:
+-- a Sabor da Itália pelo cardápio nativo, as outras duas pelo WhatsApp/categorias.
+-- Se algum desses links voltar a fazer sentido, é só acrescentar o par aqui.
+--
+-- O `raise exception` no fim existe para o casamento falhar alto: se alguém
+-- renomear uma destas empresas depois daqui, o seed deixa de ser
+-- silenciosamente parcial e falha na aplicação, em vez de dar um "rodou" que
+-- cadastrou 20 dos 22 links. Idempotente no resto: rodar de novo regrava os
+-- mesmos 22 valores.
+do $$
+declare
+  gravadas integer;
+begin
+  update public.businesses b
+     set menu_url = v.link
+    from (values
+      ('Açaíteria e Pastelaria Palmeiras',
+       'https://www.hubt.com.br/acaiteria-e-pastelaria-palmeiras/'),
+      ('Brasa Nobre Churrascaria',
+       'https://wa.me/5566992049283?text=Ol%C3%A1%20venho%20atrav%C3%A9s%20do%20Tudo%20Agora'),
+      ('Cabana Pizzaria',
+       'https://pedir.delivery/app/cabanapizzariaa/menu'),
+      ('Cacau Show',
+       'https://dire.to/cacaushowtapurah'),
+      ('Chapa Quente Lanches',
+       'https://app.anota.ai/m/kUEyWkZPw'),
+      ('Fest Food',
+       'https://wa.me/5566992000846?text=Ol%C3%A1%20venho%20atrav%C3%A9s%20do%20Tudo%20Agora.%20Quero%20mais%20informa%C3%A7%C3%B5es'),
+      ('Grupo WhatsApp Tapurah compra e vendas',
+       'https://chat.whatsapp.com/HYJHULkrMfPFzXczOaVWav'),
+      ('Hospital Municipal de Tapurah',
+       'https://wa.me/556699862489?text=Venho%20do%20Tudo%20Agora%20App%2C%20preciso%20de%20informa%C3%A7%C3%B5es'),
+      ('Jones entrega',
+       'https://wa.me/5566996611996?text=Venho%20do%20Tudo%20Agora%20App%2C%20preciso%20de%20uma%20entrega'),
+      ('Jornal Caiabis Online',
+       'https://www.caiabisonline.com.br/'),
+      ('JP Doces e Salgados',
+       'https://wa.me/556599657987?text=Ol%C3%A1%20venho%20atrav%C3%A9s%20do%20Tudo%20Agora'),
+('Makariê Pizzaria e Choperia',
+        'https://makariepizzariaechoperia.sisfood.com.br/loja'),
+       ('Paxplesner',
+       'https://paxplesner.com/'),
+      ('Plesnergóis',
+       'https://wa.me/5566992221022?text=Venho%20do%20Tudo%20Agora%20App%2C%20preciso%20de%20informa%C3%A7%C3%B5es'),
+      ('Polícia Militar de Tapurah',
+       'https://wa.me/66999365864?text=Venho%20do%20Tudo%20Agora%20App%2C%20pode%20me%20atender?'),
+      ('Prefeitura de Tapurah',
+       'https://wa.me/5566992373640?text=Venho%20do%20Tudo%20Agora%20App%2C%20preciso%20de%20informa%C3%A7%C3%B5es'),
+      ('R11Notícias',
+       'https://www.r11noticias.com.br/'),
+      ('Restaurante Fio de Azeite',
+       'https://wa.me/5547988302191?text=Ol%C3%A1%20venho%20atrav%C3%A9s%20do%20Tudo%20Agora.%20Quero%20mais%20informa%C3%A7%C3%B5es'),
+      ('Society Beer Lanchonete e Pizzaria',
+       'https://delivery.yooga.app/society-beer/tabs/home'),
+      ('Taxi Ortega',
+       'https://wa.me/556699950055?text=Ol%C3%A1%20venho%20atrav%C3%A9s%20do%20Tudo%20Agora.%20Quero%20o%20servi%C3%A7o%20de%20taxi'),
+      ('TV Buritis',
+       'https://wa.me/5566997238988?text=Venho%20do%20Tudo%20Agora%20App%2C%20preciso%20de%20informa%C3%A7%C3%B5es'),
+      ('Ultra Popular',
+       'https://wa.me/5566999645045?text=Ol%C3%A1%20venho%20atrav%C3%A9s%20do%20Tudo%20Agora')
+    ) as v(nome, link)
+   where b.name = v.nome;
+
+  get diagnostics gravadas = row_count;
+
+  if gravadas <> 22 then
+    raise exception
+      'menu_url: a carga dos cardápios de fora esperava 22 empresas e atualizou %', gravadas;
+  end if;
+end
+$$;
+
 -- ---------- CATEGORIAS DAS EMPRESAS ----------
 
 -- principais
