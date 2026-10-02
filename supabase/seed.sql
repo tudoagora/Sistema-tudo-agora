@@ -504,3 +504,27 @@ insert into public.plans (name, slug, tagline, price_cents, period, monthly_equi
    7990, 'month', null,
    '["Cadastro dos produtos, fotos, categorias e preços", "Configuração de delivery e retirada"]'::jsonb, 4)
 on conflict (slug) do nothing;
+
+-- ---------- BANNER DE PUBLICIDADE (faixa comercial da home) ----------
+--
+-- `placement = 'publicidade'` é a faixa que entra DEPOIS de "Destaques em
+-- {cidade}". Ela é da casa (`business_id is null`) e aponta para /planos.
+--
+-- `image_url` guarda o caminho servido pelo Next (`public/banners/publicidade/`),
+-- e não a URL do site antigo: o deploy não pode depender do Hostinger cair.
+-- Os arquivos são 1600x533 (3:1) e o texto do anúncio já está na arte — por
+-- isso a faixa não desenha título por cima, o `title` aqui é só o rótulo/alt.
+--
+-- `banners` só tem PK por `id`, então `on conflict` não dá para este insert
+-- idempotente: o guard é um `not exists` por arte dentro do placement.
+insert into public.banners (title, image_url, link_url, placement, sort_order, is_active)
+select v.title, v.image_url, v.link_url, 'publicidade', v.sort_order, true
+from (values
+  ('Anuncie no Tudo Agora em Tapurah', '/banners/publicidade/anuncie-tapurah-1.png', '/planos', 1),
+  ('Divulgue seu negócio em Tapurah',    '/banners/publicidade/anuncie-tapurah-2.png', '/planos', 2)
+) as v(title, image_url, link_url, sort_order)
+where not exists (
+  select 1
+  from public.banners b
+  where b.placement = 'publicidade' and b.image_url = v.image_url
+);

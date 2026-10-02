@@ -2,11 +2,13 @@ import Link from "next/link";
 import { Suspense } from "react";
 
 import { BusinessGrid } from "@/components/business-grid";
+import { AdBannerCarousel } from "@/components/home/ad-banner";
 import { CategoryGrid } from "@/components/home/category-grid";
 import { FeaturedShowcase } from "@/components/home/featured-showcase";
 import { GroupFilter } from "@/components/home/group-filter";
 import { HeroSlider, type HeroSlide } from "@/components/home/hero-slider";
 import { LiveSearch } from "@/components/home/search-box";
+import { listAdBanners } from "@/lib/banners";
 import {
   listBusinesses,
   listCategoryCounts,
@@ -82,17 +84,21 @@ export default async function HomePage(props: PageProps<"/">) {
       ? categoriaParam
       : null;
 
-  // Uma ida ao banco alimenta os números dos dois níveis do filtro.
-  const counts = await listCategoryCounts(city.id);
-
-  const [businesses, featured] = await Promise.all([
+  // Tudo que depende só de `city.id` e do slug ativo sai numa ida só.
+  const [counts, featured, businesses, adBanners] = await Promise.all([
+    // Uma ida ao banco alimenta os números dos dois níveis do filtro.
+    listCategoryCounts(city.id),
+    // 1 herói + 3 fichas: é o que o showcase da home desenha.
+    listFeaturedBusinesses(city.id, 4),
     listBusinesses(
       city.id,
       activeGroup ? [activeGroup] : null,
       { categorySlugs: activeCategory ? [activeCategory] : null },
     ),
-    // 1 herói + 3 fichas: é o que o showcase da home desenha.
-    listFeaturedBusinesses(city.id, 4),
+    // A faixa de publicidade entra DEPOIS de "Destaques em {cidade}".
+    // `AdBannerCarousel` devolve `null` quando não há banner ativo, então a
+    // lista vazia não muda o layout.
+    listAdBanners(),
   ]);
 
   // O "Ver cardápio" do herói vai direto na vitrine `/cardapio/{slug}`, que
@@ -138,6 +144,8 @@ export default async function HomePage(props: PageProps<"/">) {
         citySlug={city.slug}
         heroMenuHref={heroMenuSlug ? `/cardapio/${heroMenuSlug}` : null}
       />
+
+      <AdBannerCarousel banners={adBanners} />
 
       <section
         id="descubra"

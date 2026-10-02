@@ -372,6 +372,17 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"site_settings": {
+                  Row: {
+                    "key": string,"updated_at": string,"value": string
+                  }
+                  Insert: {
+                    "key": string,"updated_at"?: string,"value": string
+                  }
+                  Update: {
+                    "key"?: string,"updated_at"?: string,"value"?: string
+                  }
+                  Relationships: []
                 },"subscriptions": {
                   Row: {
                     "business_id": number,"cancelled_at": string | null,"created_at": string,"current_period_end": string | null,"id": number,"plan_id": number,"provider": string | null,"provider_reference": string | null,"started_at": string | null,"status": Database["public"]['Enums']["subscription_status"]

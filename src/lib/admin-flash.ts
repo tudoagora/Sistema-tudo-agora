@@ -100,6 +100,48 @@ const MENSAGENS: Record<`${"erro" | "feito"}-${string}`, AdminFlash> = {
     tone: "erro",
     mensagem: "Não foi possível salvar o plano. Tente de novo.",
   },
+
+  // Banners de publicidade
+  "feito-banner-salvo": {
+    tone: "ok",
+    mensagem: "Banner salvo.",
+  },
+  "feito-banner-criado": {
+    tone: "ok",
+    mensagem: "Banner criado. Confira a imagem e o link antes de salvar.",
+  },
+  "feito-banner-excluido": {
+    tone: "ok",
+    mensagem: "Banner excluído.",
+  },
+  "feito-banner-ordenado": {
+    tone: "ok",
+    mensagem: "Ordem dos banners atualizada.",
+  },
+  "feito-banner-limite-salvo": {
+    tone: "ok",
+    mensagem: "Quantidade de banners exibidos atualizada.",
+  },
+  "erro-salvar-banner": {
+    tone: "erro",
+    mensagem: "Não foi possível salvar o banner. Tente de novo.",
+  },
+  "erro-excluir-banner": {
+    tone: "erro",
+    mensagem: "Não foi possível excluir o banner.",
+  },
+  "erro-banner-inexistente": {
+    tone: "erro",
+    mensagem: "O banner não existe mais.",
+  },
+  "erro-ordenar-banner": {
+    tone: "erro",
+    mensagem: "Não foi possível mudar a ordem. Tente de novo.",
+  },
+  "erro-salvar-limite-banner": {
+    tone: "erro",
+    mensagem: "A quantidade precisa ser um número entre 1 e 8.",
+  },
 };
 
 /** Valor de `searchParams` já normalizado para string. */
