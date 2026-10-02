@@ -4,19 +4,23 @@ import type { Route } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useTransition } from "react";
+import { useEffect, useTransition } from "react";
 
+import { smoothScrollTo, stopSmoothScroll } from "@/lib/smooth-scroll";
 import { cn } from "@/lib/utils";
 
 /**
  * Pílula de categoria da home.
  *
  * O clique não espera o servidor: a seção `#descubra` já está na página nos
- * dois estados (com e sem filtro), então rolamos até ela de imediato para dar
- * retorno visual, e só depois disparamos a navegação que troca `?grupo=`. A
- * listagem filtrada entra no lugar quando o RSC chega. Com `scroll: false` o
- * Next não repete a rolagem no fim, e a âncora continua no `href` para clique
- * com modificador (nova aba) e para link colado — aí o navegador trata.
+ * dois estados (com e sem filtro), então a rolagem começa na hora, em paralelo
+ * com a navegação que troca `?grupo=`. A rolagem é longa de propósito — ela
+ * dura o suficiente para a listagem filtrada chegar, e o visitante chega na
+ * seção já com a categoria escolhida no lugar.
+ *
+ * Com `scroll: false` o Next não repete a rolagem no fim, e a âncora continua
+ * no `href` para clique com modificador (nova aba) e para link colado — aí quem
+ * trata é o navegador.
  */
 export function CategoryPill({
   slug,
@@ -32,6 +36,10 @@ export function CategoryPill({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
+  // A animação é global (um rAF só na página): se esta pílula sair do DOM no
+  // meio do voo, os listeners não podem ficar pendurados.
+  useEffect(() => stopSmoothScroll, []);
+
   return (
     <Link
       href={`/?grupo=${slug}#descubra` as Route}
@@ -43,9 +51,8 @@ export function CategoryPill({
         }
         event.preventDefault();
 
-        document
-          .getElementById("descubra")
-          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+        const destino = document.getElementById("descubra");
+        if (destino) smoothScrollTo(destino);
 
         startTransition(() => {
           router.push(`/?grupo=${slug}` as Route, { scroll: false });
