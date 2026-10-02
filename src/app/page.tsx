@@ -130,7 +130,7 @@ export default async function HomePage(props: PageProps<"/">) {
         </div>
       </section>
 
-      <CategoryGrid groups={groups} citySlug={city.slug} counts={counts.groups} />
+      <CategoryGrid groups={groups} counts={counts.groups} />
 
       <FeaturedShowcase
         businesses={featured}

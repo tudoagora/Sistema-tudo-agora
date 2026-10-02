@@ -1,3 +1,4 @@
+import type { Route } from "next";
 import Image from "next/image";
 import Link from "next/link";
 
@@ -6,11 +7,9 @@ import type { Group } from "@/lib/catalog";
 /** Seção CATEGORIAS: as 9 pílulas com foto, no formato do site atual. */
 export function CategoryGrid({
   groups,
-  citySlug,
   counts,
 }: {
   groups: Group[];
-  citySlug: string;
   counts: Record<string, number>;
 }) {
   if (groups.length === 0) return null;
@@ -28,7 +27,11 @@ export function CategoryGrid({
         {groups.map((group) => (
           <li key={group.slug}>
             <Link
-              href={`/cidades/${citySlug}/g/${group.slug}`}
+              // A pílula filtra a home em vez de levar para a página da
+              // categoria: `?grupo=` é o mesmo estado que o filtro escreve,
+              // então a grade e a fileira de chips contam a mesma história.
+              // O cast é seguro porque só variamos a query, nunca o caminho.
+              href={`/?grupo=${group.slug}` as Route}
               className="group flex flex-col items-center gap-2 rounded-card p-2 text-center transition-colors hover:bg-superficie"
             >
               <span className="relative block h-[86px] w-[86px] overflow-hidden rounded-[20px] border border-borda bg-superficie-2">
