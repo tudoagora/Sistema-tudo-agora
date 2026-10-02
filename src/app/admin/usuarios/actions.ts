@@ -30,6 +30,13 @@ const updateSchema = z.object({
   memberRole: z.enum(MEMBER_ROLES),
 });
 
+const passwordSchema = z.object({
+  password: z
+    .string()
+    .min(8, "A senha precisa de pelo menos 8 caracteres.")
+    .max(72, "A senha precisa de no máximo 72 caracteres."),
+});
+
 /** `"sem vínculo"` chega como string vazia; qualquer outro texto tem de ser inteiro. */
 function parseBusinessId(raw: FormDataEntryValue | null): number | null | undefined {
   const value = String(raw ?? "").trim();
@@ -244,6 +251,29 @@ export async function updateUser(formData: FormData) {
   revalidatePath("/admin/usuarios");
   revalidatePath("/admin");
   redirect("/admin/usuarios?feito=usuario-salvo");
+}
+
+export async function changePassword(formData: FormData) {
+  const session = await requireAdmin();
+
+  const parsed = passwordSchema.safeParse({
+    password: formData.get("password"),
+  });
+  if (!parsed.success) {
+    redirect("/admin/usuarios?erro=senha-invalida");
+  }
+
+  const { error } = await createAdminClient().auth.admin.updateUserById(
+    session.user.id,
+    { password: parsed.data.password },
+  );
+  if (error) {
+    console.error("[changePassword] falha ao alterar senha", error);
+    redirect("/admin/usuarios?erro=trocar-senha");
+  }
+
+  revalidatePath("/admin/usuarios");
+  redirect("/admin/usuarios?feito=senha-trocada");
 }
 
 /** Remove a conta no GoTrue; a FK `profiles.id` derruba o perfil em cascade. */

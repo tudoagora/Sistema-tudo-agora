@@ -64,6 +64,19 @@ const MENSAGENS: Record<`${"erro" | "feito"}-${string}`, AdminFlash> = {
     tone: "ok",
     mensagem: "Usuário removido.",
   },
+  "feito-senha-trocada": {
+    tone: "ok",
+    mensagem: "Sua senha foi trocada.",
+  },
+  "erro-senha-invalida": {
+    tone: "erro",
+    mensagem:
+      "A senha precisa ter entre 8 e 72 caracteres. Nada foi alterado.",
+  },
+  "erro-trocar-senha": {
+    tone: "erro",
+    mensagem: "Não foi possível trocar a senha. Tente de novo.",
+  },
   "erro-salvar-usuario": {
     tone: "erro",
     mensagem: "Não foi possível salvar o usuário. Tente de novo.",

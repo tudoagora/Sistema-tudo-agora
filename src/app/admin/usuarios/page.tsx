@@ -5,7 +5,7 @@ import { requireAdmin } from "@/lib/auth";
 import type { AdminFlashParams } from "@/lib/admin-flash";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { updateUser } from "./actions";
+import { changePassword, updateUser } from "./actions";
 import { DeleteUserButton } from "./delete-user-button";
 import { MEMBER_ROLE_LABELS, ROLE_LABELS } from "./state";
 import { UserForm } from "./user-form";
@@ -245,6 +245,38 @@ export default async function UsuariosAdminPage(
                   Salvar
                 </button>
               </form>
+
+              {isSelf ? (
+                <form
+                  action={changePassword}
+                  className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end"
+                >
+                  <div>
+                    <label
+                      className="mb-1.5 block text-xs font-semibold text-texto-forte"
+                      htmlFor={`password-${row.id}`}
+                    >
+                      Trocar senha
+                    </label>
+                    <input
+                      id={`password-${row.id}`}
+                      name="password"
+                      type="password"
+                      minLength={8}
+                      maxLength={72}
+                      required
+                      placeholder="Nova senha (mín. 8 caracteres)"
+                      className={select}
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="min-h-11 rounded-pill border border-borda-forte px-5 text-sm font-semibold text-texto-suave transition-colors hover:border-marca-600 hover:text-marca-800"
+                  >
+                    Atualizar senha
+                  </button>
+                </form>
+              ) : null}
 
               <DeleteUserButton
                 userId={row.id}
