@@ -15,7 +15,6 @@ import {
   listFeaturedBusinesses,
   listGroups,
   listSubcategories,
-  resolveStorefrontSlug,
   type Group,
 } from "@/lib/catalog";
 import { getCurrentCity } from "@/lib/city";
@@ -101,13 +100,12 @@ export default async function HomePage(props: PageProps<"/">) {
     listAdBanners(),
   ]);
 
-  // O "Ver cardápio" do herói vai direto na vitrine `/cardapio/{slug}`, que
-  // só existe quando o slug é alcançável (`custom_slug` ou slug único).
+  // O "Ver cardápio" do herói vai direto na vitrine `/cardapio/{slug}`, que só
+  // existe quando o slug é alcançável. `storefrontSlug` já vem resolvido do
+  // banco: perguntar de novo aqui custava um terceiro salto sequencial no
+  // caminho crítico da home — o tempo que se sente ao voltar para ela.
   const hero = featured[0];
-  const heroMenuSlug =
-    hero && hero.hasMenu
-      ? await resolveStorefrontSlug(hero.customSlug, hero.slug)
-      : null;
+  const heroMenuSlug = hero?.hasMenu ? hero.storefrontSlug : null;
 
   return (
     <>

@@ -431,6 +431,11 @@ isOneToOne: false
             "list_category_counts":
 { Args: { "p_city_id": number }; Returns: Json
                            },
+            "list_featured_businesses":
+{ Args: { "p_city_id": number,"p_limit"?: number }; Returns: {
+              "category_name": string,"city_slug": string,"custom_slug": string,"description": string,"has_menu": boolean,"id": number,"logo_url": string,"name": string,"slug": string,"storefront_slug": string
+            }[]
+                           },
             "manages_business":
 { Args: { "p_business_id": number }; Returns: boolean
                            },

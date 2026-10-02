@@ -53,6 +53,12 @@ export type BusinessCard = {
 export type FeaturedBusiness = BusinessCard & {
   /** Nome da categoria principal — vira o "kicker" acima do nome. */
   categoryName: string | null;
+  /**
+   * Slug da vitrine `/cardapio/{slug}` quando ela é alcançável (`custom_slug`
+   * ou slug único entre as ativas), `null` quando não é. Vem pronto do banco
+   * para a home não precisar de uma ida só para montar o CTA do herói.
+   */
+  storefrontSlug: string | null;
 };
 
 export type Business = Row & {
@@ -235,62 +241,28 @@ export const listBusinesses = cache(
 
 /**
  * Destaques da home ("Destaques em {cidade}"). Além do card, o showcase usa
- * `categoryName` no kicker e `hasMenu` para escolher quem ocupa o herói: a
- * vitrine é o CTA mais forte que existe, então uma empresa com cardápio
- * disponível entra na frente das outras (o `.sort` é estável, então não mexe
- * na ordem entre as empresas que empatam).
+ * `categoryName` no kicker, `hasMenu` para escolher quem ocupa o herói e
+ * `storefrontSlug` para o "Ver cardápio" apontar direto na vitrine.
+ *
+ * Tudo isso sai do RPC `list_featured_businesses` numa ida: a versão anterior
+ * fazia um select, uma contagem de produtos por empresa (N+1) e ainda deixava
+ * o slug da vitrine para a página resolver depois — três saltos sequenciais no
+ * caminho crítico da home, que é exatamente o que se sente ao voltar para ela.
  */
 export const listFeaturedBusinesses = cache(
-  async (cityId: number, limit = 3): Promise<FeaturedBusiness[]> => {
+  async (cityId: number, limit = 4): Promise<FeaturedBusiness[]> => {
     const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("businesses")
-      .select(
-        `id, name, slug, custom_slug, description, logo_url,
-         cities!inner(slug),
-         business_categories(is_primary, categories!inner(name))`,
-      )
-      .eq("city_id", cityId)
-      .eq("status", "active")
-      .or(
-        `is_featured.eq.true,and(featured_until.is.null,featured_until.gt.${new Date().toISOString()})`,
-      )
-      // `businesses` não tem `sort_order` — quem decide a ordem manual é o
-      // admin, e até hoje ele não tem campo para isso. Ordenar pelo nome deixa
-      // a vitrine estável entre renders (o Postgres não garante ordem sem
-      // `order by`), e o `.sort` por `hasMenu` logo abaixo escolhe o herói.
-      .order("name", { ascending: true })
-      .limit(limit);
-
+    const { data, error } = await supabase.rpc("list_featured_businesses", {
+      p_city_id: cityId,
+      p_limit: limit,
+    });
     if (error) throw new Error(`listFeaturedBusinesses: ${error.message}`);
 
-    const rows = (data ?? []) as unknown as Record<string, unknown>[];
-    const cards = rows.map((row) => {
-      const card = toCard(row, "");
-      const city = unwrap<{ slug: string }>(row.cities);
-      const links = unwrapAll<{
-        is_primary: boolean;
-        categories: unknown;
-      }>(row.business_categories);
-
-      let categoryName: string | null = null;
-      for (const link of links) {
-        const cat = unwrap<{ name: string }>(link.categories);
-        if (!cat) continue;
-        // A principal ganha o kicker; na falta dela serve qualquer categoria.
-        if (link.is_primary || !categoryName) categoryName = cat.name;
-      }
-
-      return { ...card, citySlug: city?.slug ?? "", categoryName };
-    });
-
-    const menus = await Promise.all(
-      cards.map((card) => countMenuItems(supabase, card.id)),
-    );
-
-    return cards
-      .map((card, index) => ({ ...card, hasMenu: menus[index] > 0 }))
-      .sort((a, b) => Number(b.hasMenu) - Number(a.hasMenu));
+    return ((data ?? []) as Record<string, unknown>[]).map((row) => ({
+      ...toCard(row, ""),
+      categoryName: (row.category_name as string | null) ?? null,
+      storefrontSlug: (row.storefront_slug as string | null) ?? null,
+    }));
   },
 );
 
@@ -355,7 +327,10 @@ export const getBusinessBySlug = cache(
   },
 );
 
-/** `has_menu` exige contar produtos — o PostgREST não tipa subselect de view. */
+/**
+ * `has_menu` na página de uma empresa só: uma linha, uma contagem. As listas
+ * (home, busca, cidade) pegam o mesmo número dentro do próprio RPC.
+ */
 async function countMenuItems(
   supabase: Supabase,
   businessId: number,

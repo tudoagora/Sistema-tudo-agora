@@ -70,7 +70,8 @@ export function FeaturedShowcase({
   citySlug: string;
   /**
    * Vitrine do herói (`/cardapio/{slug}`), quando ela é alcançável. Vem do
-   * servidor porque depende de `resolveStorefrontSlug`; sem ela o botão
+   * servidor porque depende de `storefrontSlug`, que o banco resolve (com
+   * `custom_slug` ou com o slug único entre as ativas); sem ela o botão
    * "Ver cardápio" cai na seção de cardápio da página da empresa.
    */
   heroMenuHref?: string | null;

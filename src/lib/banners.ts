@@ -58,27 +58,37 @@ export const getAdLimit = cache(async (): Promise<number> => {
  * admin pode salvar dois banners com o mesmo número), então `id` desempata —
  * sem isso o Postgres devolve uma ordem arbitrária e a faixa "pula" de slide a
  * cada visita. `id` acompanha a criação, que é o que o admin espera.
+ *
+ * A busca dos banners e a leitura do limite saem no mesmo `Promise.all`, e o
+ * corte de quantos ficam é feito aqui. Antes o `.limit()` dependia do valor
+ * lido do banco, o que jogava as duas leituras em sequência — e a home esperava
+ * as duas para desenhar qualquer coisa. Buscar o teto (`MAX_AD_LIMIT`, o
+ * mesmo número que o admin pode pedir) e aparar em JS dá exatamente a mesma
+ * lista, porque a ordem é a mesma nos dois casos.
  */
 export const listAdBanners = cache(async (): Promise<AdBanner[]> => {
   const supabase = await createClient();
-  const limit = await getAdLimit();
 
-  const { data, error } = await supabase
-    .from("banners")
-    .select("id, title, image_url, link_url")
-    .eq("placement", AD_PLACEMENT)
-    .eq("is_active", true)
-    // A policy `banners_read` já esconde o que está vencido, mas ela não olha
-    // `starts_at` (só `is_active` e `ends_at`), então o agendamento futuro é
-    // filtrado aqui.
-    .or(`starts_at.is.null,starts_at.lte.${new Date().toISOString()}`)
-    .order("sort_order", { ascending: true })
-    .order("id", { ascending: true })
-    .limit(limit);
+  const [{ data, error }, limit] = await Promise.all([
+    supabase
+      .from("banners")
+      .select("id, title, image_url, link_url")
+      .eq("placement", AD_PLACEMENT)
+      .eq("is_active", true)
+      // A policy `banners_read` já esconde o que está vencido, mas ela não olha
+      // `starts_at` (só `is_active` e `ends_at`), então o agendamento futuro é
+      // filtrado aqui.
+      .or(`starts_at.is.null,starts_at.lte.${new Date().toISOString()}`)
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(MAX_AD_LIMIT),
+    getAdLimit(),
+  ]);
 
   if (error) throw new Error(`listAdBanners: ${error.message}`);
 
   return ((data ?? []) as unknown as Record<string, unknown>[])
+    .slice(0, limit)
     // Sem imagem não há o que mostrar: o banner fica invisível na faixa, mas
     // continua no admin para o admin completar o cadastro.
     .map((row) => ({
