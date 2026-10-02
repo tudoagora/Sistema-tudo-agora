@@ -29,9 +29,12 @@ export function CategoryGrid({
             <Link
               // A pílula filtra a home em vez de levar para a página da
               // categoria: `?grupo=` é o mesmo estado que o filtro escreve,
-              // então a grade e a fileira de chips contam a mesma história.
-              // O cast é seguro porque só variamos a query, nunca o caminho.
-              href={`/?grupo=${group.slug}` as Route}
+              // então a grade e a fileira de chips contam a mesma história. O
+              // `#descubra` rola até a seção filtrada — a âncora mora na URL,
+              // então a página já renderiza lá em vez de saltar depois.
+              // O cast é seguro porque só variamos a query e a âncora, nunca o
+              // caminho.
+              href={`/?grupo=${group.slug}#descubra` as Route}
               className="group flex flex-col items-center gap-2 rounded-card p-2 text-center transition-colors hover:bg-superficie"
             >
               <span className="relative block h-[86px] w-[86px] overflow-hidden rounded-[20px] border border-borda bg-superficie-2">
