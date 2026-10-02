@@ -1605,15 +1605,27 @@ function OptionGroupCard({
                               : "border-erro/40 bg-erro/5 text-texto-tenue line-through"
                           }`}
                         >
-                          {value.name}
+                          <div className="flex min-w-0 flex-1 items-center gap-2">
+                            {value.image_url ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={value.image_url}
+                                alt=""
+                                loading="lazy"
+                                decoding="async"
+                                className="h-8 w-8 shrink-0 rounded-lg border border-borda object-cover sm:h-10 sm:w-10 md:h-12 md:w-12"
+                              />
+                            ) : null}
+                            <span className="truncate">{value.name}</span>
+                          </div>
                           {group.is_flavor_group ? (
                             // Grupo de sabores: o valor guarda o preço cheio do
                             // sabor, não um acréscimo — mostra sem o "+".
-                            <span className="ml-1 text-marca-600">
+                            <span className="ml-1 shrink-0 text-marca-600">
                               {formatBRL(value.price_delta_cents)}
                             </span>
                           ) : value.price_delta_cents ? (
-                            <span className="ml-1 text-marca-600">
+                            <span className="ml-1 shrink-0 text-marca-600">
                               {value.price_delta_cents > 0 ? "+" : ""}
                               {formatBRL(value.price_delta_cents)}
                             </span>
@@ -1750,45 +1762,59 @@ function OptionGroupCard({
             </form>
           ) : null}
 
+
+
           <form
             action={valueAction}
-            className="mt-4 flex flex-wrap items-end gap-2"
+            className="mt-4 space-y-3 rounded-logo border border-borda/60 bg-white p-4"
           >
             <input type="hidden" name="businessId" value={businessId} />
             <input type="hidden" name="optionGroupId" value={group.id} />
-            <div className="min-w-40 flex-1">
-              <label htmlFor={`v-name-${group.id}`} className={label}>
-                Nova opção
-              </label>
-              <input
-                id={`v-name-${group.id}`}
-                name="name"
-                required
-                maxLength={60}
-                className={input}
-                placeholder="Catupiry"
+            <div className="grid gap-3 sm:grid-cols-[1fr_8rem]">
+              <div>
+                <label htmlFor={`v-name-${group.id}`} className={label}>
+                  Nova opção
+                </label>
+                <input
+                  id={`v-name-${group.id}`}
+                  name="name"
+                  required
+                  maxLength={60}
+                  className={input}
+                  placeholder="Catupiry"
+                />
+              </div>
+              <div>
+                <label htmlFor={`v-delta-${group.id}`} className={label}>
+                  {group.is_flavor_group ? "Preço do sabor (R$)" : "Acréscimo (R$)"}
+                </label>
+                <input
+                  id={`v-delta-${group.id}`}
+                  name="deltaReais"
+                  type="number"
+                  step="0.01"
+                  defaultValue="0.00"
+                  className={input}
+                />
+              </div>
+            </div>
+            <div>
+              <ImageField
+                businessId={businessId}
+                name="imageUrl"
+                label="Foto da opção (para mostrar no menu)"
+                hint="Tamanho sugerido 300x300 (desktop). Reduz automatico em mobile."
               />
             </div>
-            <div className="w-32">
-              <label htmlFor={`v-delta-${group.id}`} className={label}>
-                {group.is_flavor_group ? "Preço do sabor (R$)" : "Acréscimo (R$)"}
-              </label>
-              <input
-                id={`v-delta-${group.id}`}
-                name="deltaReais"
-                type="number"
-                step="0.01"
-                defaultValue="0.00"
-                className={input}
-              />
+            <div className="flex justify-start">
+              <button
+                type="submit"
+                disabled={valuePending}
+                className="min-h-10 rounded-pill border border-marca-800 px-5 text-sm font-bold text-marca-800 disabled:opacity-60"
+              >
+                Adicionar
+              </button>
             </div>
-            <button
-              type="submit"
-              disabled={valuePending}
-              className="min-h-10 rounded-pill border border-marca-800 px-5 text-sm font-bold text-marca-800 disabled:opacity-60"
-            >
-              Adicionar
-            </button>
             <ErrorNote error={valueState.error} />
           </form>
         </div>

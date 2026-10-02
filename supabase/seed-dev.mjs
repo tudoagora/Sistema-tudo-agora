@@ -119,7 +119,7 @@ async function main() {
     });
     groups[name] = g.id;
     for (const [i, [vname, delta, available]] of values.entries()) {
-      await rows("option_values", { option_group_id: g.id, name: vname, price_delta_cents: delta, is_available: available, sort_order: i + 1 });
+      await rows("option_values", { option_group_id: g.id, name: vname, price_delta_cents: delta, is_available: available, sort_order: i + 1, image_url: null });
     }
   };
   await mkGroup("Borda", 0, 1, false, 1, [["Sem borda", 0, true], ["Catupiry", 800, true], ["Cheddar", 900, true], ["Portuguesa", 1200, true]]);

@@ -10,7 +10,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## Project Summary
 
-- Registration now auto-creates auth user + profile + org_members + process + Stripe session + sends credentials email
+- Registration now auto-creates auth user + profile + org_members + process + Stripe session + sends credentials email (no manual approval required for filiação)
 - PendingApprovals and Pendentes tab removed from AdminDashboard
 - create-user edge function also creates Stripe session and sends email
 - notify-pending-registration call removed from Register.tsx

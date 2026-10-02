@@ -88,7 +88,8 @@ as $$
                 'values', (
                   select coalesce(jsonb_agg(
                     jsonb_build_object(
-                      'id', v.id, 'name', v.name, 'price_delta_cents', v.price_delta_cents
+                      'id', v.id, 'name', v.name, 'price_delta_cents', v.price_delta_cents,
+                      'image_url', v.image_url
                     ) order by v.sort_order
                   ), '[]'::jsonb)
                   from public.option_values v

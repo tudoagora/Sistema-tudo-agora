@@ -48,6 +48,7 @@ export type MenuValue = {
    * valor pertence a um grupo com `is_flavor_group`.
    */
   price_delta_cents: number;
+  image_url?: string | null;
   is_available: boolean;
   sort_order: number;
 };

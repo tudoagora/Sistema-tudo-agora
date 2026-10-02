@@ -622,19 +622,46 @@ export async function createOptionValue(
     .select("sort_order")
     .eq("option_group_id", optionGroupId);
 
+  const img = text(formData, "imageUrl");
   const { error } = await supabase.from("option_values").insert({
     option_group_id: optionGroupId,
     name: parsed.data.name,
-    // Em grupo comum é um acréscimo (negativo é legítimo: "sem borda" custa
-    // menos). Em grupo de sabores (`is_flavor_group`) é o preço cheio do sabor;
+    // Em grupo comum Ǹ um acréscimo (negativo Ǹ legítimo: "sem borda" custa
+    // menos). Em grupo de sabores (`is_flavor_group`) Ǹ o preço cheio do sabor;
     // a regra de cobrar o mais caro mora na vitrine e no `placeOrder`.
     price_delta_cents: Math.round(parsed.data.deltaReais * 100),
     sort_order: nextSortOrder((existing ?? []).map((row) => row.sort_order)),
+    ...(img ? { image_url: img } : {}),
   });
 
   if (error) return { error: friendly(error) };
   revalidateMenu(businessId);
   return { error: null };
+}
+
+export async function updateOptionValue(formData: FormData) {
+  const id = int(formData, "id");
+  const businessId = int(formData, "businessId");
+  const supabase = await clientFor(businessId);
+  if (!supabase) return failWith(NO_PERMISSION);
+
+  const name = text(formData, "name");
+  if (!name) return failWith("Informe o nome da opção.");
+  const delta = Math.round(num(formData, "deltaReais", 0) * 100);
+
+  const img = text(formData, "imageUrl");
+  const { error } = await supabase
+    .from("option_values")
+    .update({
+      name,
+      price_delta_cents: delta,
+      image_url: img || null,
+    })
+    .eq("id", id);
+  if (error) return failWith(friendly(error));
+
+  revalidateMenu(businessId);
+  return okWith("Opção salva.");
 }
 
 export async function toggleOptionValue(formData: FormData) {
