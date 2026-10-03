@@ -248,7 +248,7 @@ export function BusinessForm({
           label="Nome da empresa *"
           defaultValue={defaults?.name}
           error={error("name")}
-          placeholder="Sabor da Itália Delivery"
+          placeholder="Padaria Aurora"
           maxLength={120}
         />
 
@@ -259,7 +259,7 @@ export function BusinessForm({
               label="Endereço da página"
               defaultValue={defaults?.slug}
               error={error("slug")}
-              placeholder="sabor-da-italia-delivery"
+              placeholder="padaria-aurora"
               hint="Deixe em branco para gerar a partir do nome."
               maxLength={80}
             />
@@ -268,8 +268,8 @@ export function BusinessForm({
               label="Subdomínio próprio"
               defaultValue={defaults?.customSlug}
               error={error("customSlug")}
-              placeholder="sabordaitalia"
-              hint="Vira saboritalia.tudoagora.app.br"
+              placeholder="padariaaurora"
+              hint="Vira padariaaurora.tudoagora.app.br"
               maxLength={80}
             />
           </div>
