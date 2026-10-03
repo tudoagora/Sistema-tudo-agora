@@ -80,6 +80,8 @@ export type MenuItemOptionValue = {
   price_delta_cents: number;
   /** Foto do valor (sabor, borda, extra). `null` quando não cadastrada. */
   image_url: string | null;
+  /** "O que vem neste item". `null`/vazio quando o lojista não escreveu nada. */
+  description?: string | null;
 };
 
 export type MenuItemOptionGroup = {

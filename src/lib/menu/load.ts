@@ -54,7 +54,7 @@ export async function loadMenuEditorData(
       supabase
         .from("option_values")
         .select(
-          "id, option_group_id, name, price_delta_cents, image_url, is_available, sort_order",
+          "id, option_group_id, name, price_delta_cents, image_url, description, is_available, sort_order",
         )
         .order("sort_order"),
       supabase

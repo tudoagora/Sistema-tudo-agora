@@ -197,13 +197,13 @@ isOneToOne: false
                   ]
                 },"option_values": {
                   Row: {
-                    "id": number,"is_available": boolean,"name": string,"option_group_id": number,"price_delta_cents": number,"sort_order": number,"image_url"?: string | null
+                    "id": number,"is_available": boolean,"name": string,"option_group_id": number,"price_delta_cents": number,"sort_order": number,"image_url"?: string | null,"description"?: string | null
                   }
                   Insert: {
-                    "id"?: number,"is_available"?: boolean,"name": string,"option_group_id": number,"price_delta_cents"?: number,"sort_order"?: number,"image_url"?: string | null
+                    "id"?: number,"is_available"?: boolean,"name": string,"option_group_id": number,"price_delta_cents"?: number,"sort_order"?: number,"image_url"?: string | null,"description"?: string | null
                   }
                   Update: {
-                    "id"?: number,"is_available"?: boolean,"name"?: string,"option_group_id"?: number,"price_delta_cents"?: number,"sort_order"?: number,"image_url"?: string | null
+                    "id"?: number,"is_available"?: boolean,"name"?: string,"option_group_id"?: number,"price_delta_cents"?: number,"sort_order"?: number,"image_url"?: string | null,"description"?: string | null
                   }
                   Relationships: [
                     {

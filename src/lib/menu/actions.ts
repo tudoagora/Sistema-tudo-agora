@@ -24,6 +24,14 @@ const IMAGE_EXT: Record<string, string> = {
   "image/webp": "webp",
   "image/avif": "avif",
 };
+/**
+ * Teto da descrição do valor de opção.
+ *
+ * Fica no servidor porque o `maxLength` do `<textarea>` é só conveniência: um
+ * POST direto estouraria o limite e o texto entraria cortado no banco sem
+ * ninguém avisar. Mesmo motivo do `MAX_IMAGE_BYTES`.
+ */
+const MAX_DESCRIPTION_CHARS = 400;
 
 /* ------------------------------------------------------------------ */
 /* Leitura do FormData                                                 */
@@ -605,10 +613,17 @@ export async function createOptionValue(
     .object({
       name: z.string().trim().min(1, "Informe o nome da opção.").max(60),
       deltaReais: z.coerce.number().min(-10000).max(10000),
+      description: z
+        .string()
+        .trim()
+        .max(MAX_DESCRIPTION_CHARS, "A descrição é longa demais."),
     })
     .safeParse({
       name: formData.get("name"),
       deltaReais: formData.get("deltaReais") || 0,
+      // `?? ""` e não `|| 0`: sem o campo enviado o zod receberia `null` e
+      // reprovaria num campo que é opcional.
+      description: formData.get("description") ?? "",
     });
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
@@ -623,6 +638,7 @@ export async function createOptionValue(
     .eq("option_group_id", optionGroupId);
 
   const img = text(formData, "imageUrl");
+  const desc = parsed.data.description;
   const { error } = await supabase.from("option_values").insert({
     option_group_id: optionGroupId,
     name: parsed.data.name,
@@ -632,6 +648,7 @@ export async function createOptionValue(
     price_delta_cents: Math.round(parsed.data.deltaReais * 100),
     sort_order: nextSortOrder((existing ?? []).map((row) => row.sort_order)),
     ...(img ? { image_url: img } : {}),
+    ...(desc ? { description: desc } : {}),
   });
 
   if (error) return { error: friendly(error) };
@@ -650,12 +667,20 @@ export async function updateOptionValue(formData: FormData) {
   const delta = Math.round(num(formData, "deltaReais", 0) * 100);
 
   const img = text(formData, "imageUrl");
+  const desc = text(formData, "description");
+  if (desc.length > MAX_DESCRIPTION_CHARS) {
+    return failWith("A descrição é longa demais.");
+  }
   const { error } = await supabase
     .from("option_values")
     .update({
       name,
       price_delta_cents: delta,
       image_url: img || null,
+      // Limpar o campo tem que GRAVAR o vazio, não pular o campo: `update` só
+      // toca nas colunas enviadas, então `desc || null` é o que apaga a
+      // descrição que o lojista queria tirar.
+      description: desc || null,
     })
     .eq("id", id);
   if (error) return failWith(friendly(error));

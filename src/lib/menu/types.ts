@@ -49,6 +49,8 @@ export type MenuValue = {
    */
   price_delta_cents: number;
   image_url?: string | null;
+  /** "O que vem neste item" — aparece abaixo do nome na vitrine. */
+  description?: string | null;
   is_available: boolean;
   sort_order: number;
 };

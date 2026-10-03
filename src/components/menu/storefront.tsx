@@ -35,6 +35,8 @@ type OptionValue = {
   price_delta_cents: number;
   /** Foto do valor (sabor, borda, extra) — mostra dentro do botão. */
   image_url: string | null;
+  /** "O que vem neste item" — texto de apoio logo abaixo do nome. */
+  description?: string | null;
 };
 type OptionGroup = {
   id: number;
@@ -1004,10 +1006,13 @@ function ItemModal({
             // sabor (não um acréscimo), e a pizza cobra o mais caro entre os
             // escolhidos. Nos demais grupos o valor é um acréscimo (+R$ …).
             const sabores = group.is_flavor_group;
-            // Grupo com foto vira lista de linhas — uma opção por linha, com a
-            // imagem grande. Grupo só de texto continua em pílulas compactas,
-            // que cabem mais na tela (borda e extras costumam ter 4+ valores).
-            const temFoto = group.values.some((value) => value.image_url);
+            // Grupo com foto ou descrição vira lista de linhas — uma opção por linha, com
+            // a imagem grande e o texto de "o que vem" abaixo do nome. Grupo só
+            // de nome/preço continua em pílulas compactas, que cabem mais na
+            // tela (borda e extras costumam ter 4+ valores).
+            const emLinha = group.values.some(
+              (value) => value.image_url || value.description,
+            );
             return (
               <fieldset key={group.id}>
                 <legend className="text-xs font-bold text-texto-forte">
@@ -1029,20 +1034,25 @@ function ItemModal({
                     </span>
                   ) : null}
                 </legend>
-                <ul className={temFoto ? "mt-2 space-y-2" : "mt-2 flex flex-wrap gap-2"}>
+                <ul className={emLinha ? "mt-2 space-y-2" : "mt-2 flex flex-wrap gap-2"}>
                   {group.values.map((value) => {
                     const marcado = ids.includes(value.id);
                     return (
-                      <li key={value.id} className={temFoto ? "w-full" : undefined}>
+                      <li key={value.id} className={emLinha ? "w-full" : undefined}>
                         <button
                           type="button"
                           onClick={() => onSelect(group, value.id)}
                           aria-pressed={marcado}
                           className={cn(
                             "text-xs font-semibold transition-colors",
-                            temFoto
+                            emLinha
                               ? cn(
-                                  "flex w-full items-center gap-3 rounded-logo border p-2 text-left",
+                                  "flex w-full gap-3 rounded-logo border p-2 text-left",
+                                  // Linha de 2 linhas (foto + nome + preço) fica
+                                  // com a foto no meio; com a descrição embaixo o
+                                  // texto passa de 3 linhas e a foto sobe para o
+                                  // topo, senão ela flutua no meio da parede.
+                                  value.description ? "items-start" : "items-center",
                                   // Altura igual para linha com foto e sem foto,
                                   // senão o nome pulava ao passar pelos sabores.
                                   "min-h-16",
@@ -1071,12 +1081,14 @@ function ItemModal({
                             />
                           ) : null}
                           <span className="min-w-0 flex-1">
-                            <span className={cn(temFoto && "block text-sm")}>{value.name}</span>
+                            <span className={cn(emLinha && "block text-sm")}>
+                              {value.name}
+                            </span>
                             {sabores ? (
                               <span
                                 className={cn(
                                   marcado ? "text-white/80" : "text-marca-600",
-                                  temFoto ? "block" : "ml-1",
+                                  emLinha ? "block" : "ml-1",
                                 )}
                               >
                                 {formatBRL(value.price_delta_cents)}
@@ -1085,10 +1097,25 @@ function ItemModal({
                               <span
                                 className={cn(
                                   marcado ? "text-white/80" : "text-marca-600",
-                                  temFoto ? "block" : "ml-1",
+                                  emLinha ? "block" : "ml-1",
                                 )}
                               >
                                 {deltaLabel(value.price_delta_cents)}
+                              </span>
+                            ) : null}
+                            {/* "O que vem nesta opção". Fica dentro do botão de
+                                propósito: a linha inteira continua sendo um alvo
+                                só de clique, e quem navega por teclado recebe o
+                                texto junto do nome em vez de ter que caçar o
+                                texto solto na tela. */}
+                            {value.description ? (
+                              <span
+                                className={cn(
+                                  "mt-1 block text-xs font-normal leading-snug",
+                                  marcado ? "text-white/80" : "text-texto-suave",
+                                )}
+                              >
+                                {value.description}
                               </span>
                             ) : null}
                           </span>

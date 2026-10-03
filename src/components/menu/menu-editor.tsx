@@ -1737,6 +1737,26 @@ function OptionGroupCard({
                                 />
                               </div>
                             </div>
+                            <div>
+                              <label
+                                htmlFor={`edit-value-desc-${value.id}`}
+                                className={label}
+                              >
+                                Descrição (o que vem nesta opção)
+                              </label>
+                              <textarea
+                                id={`edit-value-desc-${value.id}`}
+                                name="description"
+                                rows={2}
+                                maxLength={400}
+                                defaultValue={value.description ?? ""}
+                                className={`${input} py-2`}
+                              />
+                              <span className="mt-1 block text-xs text-texto-tenue">
+                                Aparece abaixo do nome da opção na hora de o
+                                cliente escolher.
+                              </span>
+                            </div>
                             <ImageField
                               businessId={businessId}
                               name="imageUrl"
@@ -1885,6 +1905,23 @@ function OptionGroupCard({
                   className={input}
                 />
               </div>
+            </div>
+            <div>
+              <label htmlFor={`v-desc-${group.id}`} className={label}>
+                Descrição (o que vem nesta opção)
+              </label>
+              <textarea
+                id={`v-desc-${group.id}`}
+                name="description"
+                rows={2}
+                maxLength={400}
+                className={`${input} py-2`}
+                placeholder="Fatias de filé mignon grelhados no alho e manteiga, sobre massa italiana de 400 g."
+              />
+              <span className="mt-1 block text-xs text-texto-tenue">
+                Opcional. Aparece abaixo do nome da opção na hora de o cliente
+                escolher.
+              </span>
             </div>
             <div>
               <ImageField
