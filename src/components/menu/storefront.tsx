@@ -1004,6 +1004,10 @@ function ItemModal({
             // sabor (não um acréscimo), e a pizza cobra o mais caro entre os
             // escolhidos. Nos demais grupos o valor é um acréscimo (+R$ …).
             const sabores = group.is_flavor_group;
+            // Grupo com foto vira lista de linhas — uma opção por linha, com a
+            // imagem grande. Grupo só de texto continua em pílulas compactas,
+            // que cabem mais na tela (borda e extras costumam ter 4+ valores).
+            const temFoto = group.values.some((value) => value.image_url);
             return (
               <fieldset key={group.id}>
                 <legend className="text-xs font-bold text-texto-forte">
@@ -1025,22 +1029,26 @@ function ItemModal({
                     </span>
                   ) : null}
                 </legend>
-                <ul className="mt-2 flex flex-wrap gap-2">
+                <ul className={temFoto ? "mt-2 space-y-2" : "mt-2 flex flex-wrap gap-2"}>
                   {group.values.map((value) => {
                     const marcado = ids.includes(value.id);
                     return (
-                      <li key={value.id}>
+                      <li key={value.id} className={temFoto ? "w-full" : undefined}>
                         <button
                           type="button"
                           onClick={() => onSelect(group, value.id)}
                           aria-pressed={marcado}
                           className={cn(
-                            "min-h-9 rounded-pill border text-xs font-semibold transition-colors",
-                            // Com foto a pílula vira uma linha com miniatura; sem
-                            // foto continua o texto puro de antes.
-                            value.image_url
-                              ? "flex items-center gap-2 py-0.5 pl-1.5 pr-4"
-                              : "px-4",
+                            "text-xs font-semibold transition-colors",
+                            temFoto
+                              ? cn(
+                                  "flex w-full items-center gap-3 rounded-logo border p-2 text-left",
+                                  // Altura igual para linha com foto e sem foto,
+                                  // senão o nome pulava ao passar pelos sabores.
+                                  "min-h-16",
+                                  marcado && "ring-2 ring-marca-600",
+                                )
+                              : "min-h-9 rounded-pill border px-4",
                             marcado
                               ? "border-marca-600 bg-marca-600 text-white"
                               : cn(
@@ -1057,31 +1065,33 @@ function ItemModal({
                               loading="lazy"
                               decoding="async"
                               className={cn(
-                                "h-7 w-7 shrink-0 rounded-full object-cover",
+                                "h-12 w-12 shrink-0 rounded-logo object-cover sm:h-14 sm:w-14",
                                 marcado ? "ring-1 ring-white/50" : "ring-1 ring-borda",
                               )}
                             />
                           ) : null}
-                          {value.name}
-                          {sabores ? (
-                            <span
-                              className={cn(
-                                "ml-1",
-                                marcado ? "text-white/80" : "text-marca-600",
-                              )}
-                            >
-                              {formatBRL(value.price_delta_cents)}
-                            </span>
-                          ) : value.price_delta_cents ? (
-                            <span
-                              className={cn(
-                                "ml-1",
-                                marcado ? "text-white/80" : "text-marca-600",
-                              )}
-                            >
-                              {deltaLabel(value.price_delta_cents)}
-                            </span>
-                          ) : null}
+                          <span className="min-w-0 flex-1">
+                            <span className={cn(temFoto && "block text-sm")}>{value.name}</span>
+                            {sabores ? (
+                              <span
+                                className={cn(
+                                  marcado ? "text-white/80" : "text-marca-600",
+                                  temFoto ? "block" : "ml-1",
+                                )}
+                              >
+                                {formatBRL(value.price_delta_cents)}
+                              </span>
+                            ) : value.price_delta_cents ? (
+                              <span
+                                className={cn(
+                                  marcado ? "text-white/80" : "text-marca-600",
+                                  temFoto ? "block" : "ml-1",
+                                )}
+                              >
+                                {deltaLabel(value.price_delta_cents)}
+                              </span>
+                            ) : null}
+                          </span>
                         </button>
                       </li>
                     );
