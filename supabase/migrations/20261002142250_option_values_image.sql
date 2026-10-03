@@ -1,3 +1,3 @@
--- Adiciona imagem por valor de opção
+-- Adiciona imagem por valor de opÃ§Ã£o
 alter table public.option_values
   add column if not exists image_url text;

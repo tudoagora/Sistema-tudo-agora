@@ -33,6 +33,8 @@ type OptionValue = {
    * valor pertence a um grupo com `is_flavor_group`.
    */
   price_delta_cents: number;
+  /** Foto do valor (sabor, borda, extra) — mostra dentro do botão. */
+  image_url: string | null;
 };
 type OptionGroup = {
   id: number;
@@ -1024,49 +1026,66 @@ function ItemModal({
                   ) : null}
                 </legend>
                 <ul className="mt-2 flex flex-wrap gap-2">
-                  {group.values.map((value) => (
-                    <li key={value.id}>
-                      <button
-                        type="button"
-                        onClick={() => onSelect(group, value.id)}
-                        aria-pressed={ids.includes(value.id)}
-                        className={cn(
-                          "min-h-9 rounded-pill border px-4 text-xs font-semibold transition-colors",
-                          ids.includes(value.id)
-                            ? "border-marca-600 bg-marca-600 text-white"
-                            : cn(
-                                "border-borda-forte bg-white text-texto-forte hover:border-marca-600",
-                                falta && "border-erro/50",
-                              ),
-                        )}
-                      >
-                        {value.name}
-                        {sabores ? (
-                          <span
-                            className={cn(
-                              "ml-1",
-                              ids.includes(value.id)
-                                ? "text-white/80"
-                                : "text-marca-600",
-                            )}
-                          >
-                            {formatBRL(value.price_delta_cents)}
-                          </span>
-                        ) : value.price_delta_cents ? (
-                          <span
-                            className={cn(
-                              "ml-1",
-                              ids.includes(value.id)
-                                ? "text-white/80"
-                                : "text-marca-600",
-                            )}
-                          >
-                            {deltaLabel(value.price_delta_cents)}
-                          </span>
-                        ) : null}
-                      </button>
-                    </li>
-                  ))}
+                  {group.values.map((value) => {
+                    const marcado = ids.includes(value.id);
+                    return (
+                      <li key={value.id}>
+                        <button
+                          type="button"
+                          onClick={() => onSelect(group, value.id)}
+                          aria-pressed={marcado}
+                          className={cn(
+                            "min-h-9 rounded-pill border text-xs font-semibold transition-colors",
+                            // Com foto a pílula vira uma linha com miniatura; sem
+                            // foto continua o texto puro de antes.
+                            value.image_url
+                              ? "flex items-center gap-2 py-0.5 pl-1.5 pr-4"
+                              : "px-4",
+                            marcado
+                              ? "border-marca-600 bg-marca-600 text-white"
+                              : cn(
+                                  "border-borda-forte bg-white text-texto-forte hover:border-marca-600",
+                                  falta && "border-erro/50",
+                                ),
+                          )}
+                        >
+                          {value.image_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={value.image_url}
+                              alt=""
+                              loading="lazy"
+                              decoding="async"
+                              className={cn(
+                                "h-7 w-7 shrink-0 rounded-full object-cover",
+                                marcado ? "ring-1 ring-white/50" : "ring-1 ring-borda",
+                              )}
+                            />
+                          ) : null}
+                          {value.name}
+                          {sabores ? (
+                            <span
+                              className={cn(
+                                "ml-1",
+                                marcado ? "text-white/80" : "text-marca-600",
+                              )}
+                            >
+                              {formatBRL(value.price_delta_cents)}
+                            </span>
+                          ) : value.price_delta_cents ? (
+                            <span
+                              className={cn(
+                                "ml-1",
+                                marcado ? "text-white/80" : "text-marca-600",
+                              )}
+                            >
+                              {deltaLabel(value.price_delta_cents)}
+                            </span>
+                          ) : null}
+                        </button>
+                      </li>
+                    );
+                  })}
                 </ul>
               </fieldset>
             );

@@ -78,6 +78,8 @@ export type MenuItemOptionValue = {
    * naquele tamanho. A regra de combinar pelo mais caro mora em `pricing.ts`.
    */
   price_delta_cents: number;
+  /** Foto do valor (sabor, borda, extra). `null` quando não cadastrada. */
+  image_url: string | null;
 };
 
 export type MenuItemOptionGroup = {
