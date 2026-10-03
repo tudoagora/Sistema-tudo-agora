@@ -51,6 +51,7 @@ import {
   unlinkProductFromOptionGroup,
   updateMenuSection,
   updateOptionGroup,
+  updateOptionValue,
   updateProduct,
 } from "@/lib/menu/actions";
 import {
@@ -1493,7 +1494,10 @@ function OptionGroupCard({
   valuePending: boolean;
 }) {
   const [editing, setEditing] = useState(false);
+  /** Id do valor de opção aberto para edição — um por vez, como os grupos. */
+  const [editingValueId, setEditingValueId] = useState<number | null>(null);
   const saveGroup = useNotifyAction(updateOptionGroup);
+  const saveValue = useNotifyAction(updateOptionValue);
   const removeGroup = useNotifyAction(deleteOptionGroup);
   const removeValue = useNotifyAction(deleteOptionValue);
   const available = groupValues.filter((value) => value.is_available).length;
@@ -1657,6 +1661,20 @@ function OptionGroupCard({
                           >
                             {value.is_available ? "⏸" : "▶"}
                           </ToggleButton>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setEditingValueId((current) =>
+                                current === value.id ? null : value.id,
+                              )
+                            }
+                            title={`Editar ${value.name}`}
+                            aria-label={`Editar ${value.name}`}
+                            aria-expanded={editingValueId === value.id}
+                            className="px-1 text-xs leading-none text-texto-tenue transition-colors hover:text-marca-800"
+                          >
+                            <span aria-hidden="true">✎</span>
+                          </button>
                           <form action={removeValue} className="contents">
                             <input type="hidden" name="id" value={value.id} />
                             <input type="hidden" name="businessId" value={businessId} />
@@ -1670,6 +1688,76 @@ function OptionGroupCard({
                             </button>
                           </form>
                         </div>
+                        {editingValueId === value.id ? (
+                          <form
+                            action={saveValue}
+                            className="mt-2 space-y-3 rounded-logo border border-borda/60 bg-superficie p-4"
+                          >
+                            <input type="hidden" name="id" value={value.id} />
+                            <input
+                              type="hidden"
+                              name="businessId"
+                              value={businessId}
+                            />
+                            <div className="grid gap-3 sm:grid-cols-[1fr_8rem]">
+                              <div>
+                                <label
+                                  htmlFor={`edit-value-name-${value.id}`}
+                                  className={label}
+                                >
+                                  Nome
+                                </label>
+                                <input
+                                  id={`edit-value-name-${value.id}`}
+                                  name="name"
+                                  required
+                                  maxLength={60}
+                                  defaultValue={value.name}
+                                  className={input}
+                                />
+                              </div>
+                              <div>
+                                <label
+                                  htmlFor={`edit-value-delta-${value.id}`}
+                                  className={label}
+                                >
+                                  {group.is_flavor_group
+                                    ? "Preço do sabor (R$)"
+                                    : "Acréscimo (R$)"}
+                                </label>
+                                <input
+                                  id={`edit-value-delta-${value.id}`}
+                                  name="deltaReais"
+                                  type="number"
+                                  step="0.01"
+                                  defaultValue={(
+                                    value.price_delta_cents / 100
+                                  ).toFixed(2)}
+                                  className={input}
+                                />
+                              </div>
+                            </div>
+                            <ImageField
+                              businessId={businessId}
+                              name="imageUrl"
+                              defaultValue={value.image_url}
+                              label="Foto da opção (para mostrar no menu)"
+                              hint="Tamanho sugerido 300x300 (desktop). Reduz automatico em mobile."
+                            />
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button type="submit" className={primaryButton}>
+                                Salvar opção
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingValueId(null)}
+                                className={ghostButton}
+                              >
+                                Fechar
+                              </button>
+                            </div>
+                          </form>
+                        ) : null}
                       </SortableItem>
                     ))}
                   </ul>
