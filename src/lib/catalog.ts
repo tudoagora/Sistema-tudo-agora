@@ -69,6 +69,26 @@ export type Business = Row & {
   hasMenu: boolean;
 };
 
+/** Grupo "Serviços" (`categories.slug`, raiz da árvore). */
+export const SERVICOS_GROUP = "servicos";
+
+/**
+ * Empresa de serviço (autoescola, clínica, oficina...) em vez de loja com
+ * cardápio.
+ *
+ * O teste é pelo GRUPO, não pela categoria nem pelo `source`: empresa marcada
+ * numa subcategoria de serviços (`educacao`, `servicos-em-geral`...) também é
+ * serviço, e `getBusinessBySlug` já devolve o slug do pai em `groups`. Sem
+ * isso a página de uma autoescola anunciava "Taxa de entrega: grátis" e um
+ * cardápio que nunca existiu, porque `delivery_fee_cents` tem `0` como padrão
+ * e o cardápio vazio é o estado normal de quem não vende produto.
+ */
+export function isServiceBusiness(
+  business: Pick<Business, "groups"> | null | undefined,
+): boolean {
+  return Boolean(business?.groups.includes(SERVICOS_GROUP));
+}
+
 export type MenuItemOptionValue = {
   id: number;
   name: string;
@@ -280,7 +300,7 @@ export const getBusinessBySlug = cache(
          cities!inner(slug, name),
          business_categories(
            is_primary,
-           categories!inner(name, slug, parent:categories(slug))
+           categories!inner(name, slug, parent_id)
          )`,
       )
       .eq("slug", slug)
@@ -300,12 +320,12 @@ export const getBusinessBySlug = cache(
     }>(raw.business_categories);
 
     const categories: Business["categories"] = [];
-    const groupSlugs = new Set<string>();
+    const linked: { slug: string; parentId: number | null }[] = [];
     for (const link of links) {
       const cat = unwrap<{
         name: string;
         slug: string;
-        parent: unknown;
+        parent_id: number | null;
       }>(link.categories);
       if (!cat) continue;
       categories.push({
@@ -313,11 +333,15 @@ export const getBusinessBySlug = cache(
         slug: cat.slug,
         isPrimary: link.is_primary,
       });
-      // empresa marcada numa subcategoria também conta para a principal
-      groupSlugs.add(unwrap<{ slug: string }>(cat.parent)?.slug ?? cat.slug);
+      linked.push({
+        slug: cat.slug,
+        parentId: cat.parent_id == null ? null : Number(cat.parent_id),
+      });
     }
     categories.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
 
+    // empresa marcada numa subcategoria também conta para a principal
+    const groupSlugs = await resolveGroupSlugs(supabase, linked);
     const menuCount = await countMenuItems(supabase, row.id);
 
     return {
@@ -325,11 +349,57 @@ export const getBusinessBySlug = cache(
       citySlug: city?.slug ?? citySlug,
       cityName: city?.name ?? citySlug,
       categories,
-      groups: [...groupSlugs].sort(),
+      groups: groupSlugs,
       hasMenu: menuCount > 0,
     };
   },
 );
+
+/**
+ * Slug da categoria PRINCIPAL de cada categoria em que a empresa está marcada.
+ *
+ * O pai vem de uma segunda leitura em vez do embed `parent:categories(...)`
+ * porque o PostgREST não resolve a auto-relação de `categories`: a FK
+ * `categories_parent_id_fkey` não entra no cache de schema e o embed volta
+ * `[]` em vez de dar erro — o que fazia `groups` trazer o slug da
+ * SUBCATEGORIA (`educacao`, `servicos-14`) e nenhuma página conseguir saber a
+ * que grupo principal a empresa pertencia. A lista de empresas não era
+ * afetada porque `list_businesses` faz o coalesce em SQL.
+ *
+ * São as raízes (`parent_id is null`) que interessam — poucas linhas — então a
+ * consulta sai sem filtro e vale para todos os pais de uma vez.
+ */
+async function resolveGroupSlugs(
+  supabase: Supabase,
+  linked: { slug: string; parentId: number | null }[],
+): Promise<string[]> {
+  const parentIds = [
+    ...new Set(
+      linked.map((c) => c.parentId).filter((id): id is number => id != null),
+    ),
+  ];
+  const rootById = new Map<number, string>();
+  if (parentIds.length > 0) {
+    const { data, error } = await supabase
+      .from("categories")
+      .select("id, slug")
+      .in("id", parentIds);
+    if (error) throw new Error(`resolveGroupSlugs: ${error.message}`);
+    for (const root of unwrapAll<{ id: number; slug: string }>(data)) {
+      rootById.set(Number(root.id), root.slug);
+    }
+  }
+
+  const groupSlugs = new Set<string>();
+  for (const cat of linked) {
+    // categoria marcada na própria raiz conta como estava na raiz
+    const group = cat.parentId == null ? cat.slug : rootById.get(cat.parentId);
+    // pai fora do alcance da leitura (categoria raiz desativada): a empresa
+    // fica sem grupo, e não com um slug de subcategoria fingindo ser principal
+    if (group) groupSlugs.add(group);
+  }
+  return [...groupSlugs].sort();
+}
 
 /**
  * `has_menu` na página de uma empresa só: uma linha, uma contagem. As listas

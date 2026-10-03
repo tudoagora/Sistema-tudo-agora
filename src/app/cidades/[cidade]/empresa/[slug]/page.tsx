@@ -8,6 +8,7 @@ import {
   getBusinessBySlug,
   getBusinessMenu,
   getCityBySlug,
+  isServiceBusiness,
   resolveStorefrontSlug,
 } from "@/lib/catalog";
 import {
@@ -47,7 +48,13 @@ export default async function BusinessPage(
   ]);
   if (!city || !business) notFound();
 
-  const menu = business.hasMenu ? await getBusinessMenu(business.id) : null;
+  // Empresa de serviço não tem vitrine: nada de cardápio, taxa de entrega ou
+  // pedido mínimo na página. O contato é o WhatsApp e o link que a empresa
+  // cadastrou. Ler o menu é gasto à toa — e `hasMenu`/`delivery_fee_cents` não
+  // servem de teste aqui, porque os dois valem para quem não vende nada.
+  const servico = isServiceBusiness(business);
+  const menu =
+    !servico && business.hasMenu ? await getBusinessMenu(business.id) : null;
   const sections = menu?.menu_categories ?? [];
   // O botão precisa de item *disponível*, não de seção: `get_business_menu`
   // devolve as seções ativas mesmo vazias (`item_count: 0`), e o `MenuList`
@@ -71,7 +78,11 @@ export default async function BusinessPage(
   // e também se o que está no banco não for http(s) — o `href` é o único
   // lugar do app onde texto de terceiro vira código, então o filtro é na
   // renderização e não só na gravação.
+  //
+  // Para empresa de serviço a MESMA coluna é o site: o lojista não tem cardápio
+  // para colar, e o link do próprio site é o que o visitante quer.
   const menuExterno = safeExternalUrl(business.menu_url);
+  const siteExterno = servico ? menuExterno : null;
   const hours = formatOpeningHours(business.opening_hours as OpeningHours);
   const open = isOpenNow(
     business.opening_hours as OpeningHours,
@@ -113,6 +124,21 @@ export default async function BusinessPage(
           </a>
         ) : null}
         {/*
+          Empresa de serviço: só o contato. Nenhum botão de cardápio/vitrine,
+          porque não existe vitrine — e "Ver cardápio" apontando para um link
+          de site com esse nome seria pior que não mostrar botão nenhum.
+        */}
+        {siteExterno ? (
+          <a
+            href={siteExterno}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex min-h-11 items-center rounded-pill bg-marca-gradient px-5 text-sm font-bold text-white"
+          >
+            Ver site da empresa
+          </a>
+        ) : null}
+        {/*
           Um destino só para o botão de cardápio, nesta ordem: o link que o
           cliente cadastrou, a vitrine do próprio site, ou a âncora para a
           lista que já está abaixo. Quando existe cardápio de fora E itens
@@ -121,30 +147,31 @@ export default async function BusinessPage(
           (dois botões de cardápio lado a lado) só geraria dúvida sobre qual
           é o cardápio certo.
         */}
-        {menuExterno ? (
-          <a
-            href={menuExterno}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex min-h-11 items-center rounded-pill bg-marca-gradient px-5 text-sm font-bold text-white"
-          >
-            Ver cardápio
-          </a>
-        ) : storefrontHref ? (
-          <Link
-            href={storefrontHref}
-            className="inline-flex min-h-11 items-center rounded-pill bg-marca-gradient px-5 text-sm font-bold text-white"
-          >
-            Pedir online
-          </Link>
-        ) : sections.length > 0 ? (
-          <a
-            href="#cardapio"
-            className="inline-flex min-h-11 items-center rounded-pill bg-marca-gradient px-5 text-sm font-bold text-white"
-          >
-            Ver cardápio
-          </a>
-        ) : null}
+        {!servico &&
+          (menuExterno ? (
+            <a
+              href={menuExterno}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-11 items-center rounded-pill bg-marca-gradient px-5 text-sm font-bold text-white"
+            >
+              Ver cardápio
+            </a>
+          ) : storefrontHref ? (
+            <Link
+              href={storefrontHref}
+              className="inline-flex min-h-11 items-center rounded-pill bg-marca-gradient px-5 text-sm font-bold text-white"
+            >
+              Pedir online
+            </Link>
+          ) : sections.length > 0 ? (
+            <a
+              href="#cardapio"
+              className="inline-flex min-h-11 items-center rounded-pill bg-marca-gradient px-5 text-sm font-bold text-white"
+            >
+              Ver cardápio
+            </a>
+          ) : null)}
       </div>
 
       <dl className="mt-8 grid gap-4 sm:grid-cols-2">
@@ -192,7 +219,13 @@ export default async function BusinessPage(
           </InfoCard>
         ) : null}
 
-        {business.delivery_fee_cents != null ? (
+        {/*
+          Entrega e pedido mínimo são linguagem de loja. `delivery_fee_cents`
+          tem `0` como padrão no banco — que é o valor que a página lia como
+          "Taxa de entrega: grátis" numa autoescola — então esconder só quando
+          é 0 não resolvia.
+        */}
+        {!servico && business.delivery_fee_cents != null ? (
           <InfoCard title="Taxa de entrega">
             {business.delivery_fee_cents > 0
               ? formatBRL(business.delivery_fee_cents)
@@ -200,7 +233,7 @@ export default async function BusinessPage(
           </InfoCard>
         ) : null}
 
-        {business.min_order_cents ? (
+        {!servico && business.min_order_cents ? (
           <InfoCard title="Pedido mínimo">
             {formatBRL(business.min_order_cents)}
           </InfoCard>
@@ -211,52 +244,59 @@ export default async function BusinessPage(
         ) : null}
       </dl>
 
-      <section id="cardapio" className="mt-12 scroll-mt-24">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
-          <h2 className="text-xl font-black tracking-tight text-marca-800">
-            Cardápio
-          </h2>
-          {storefrontHref ? (
-            <Link
-              href={storefrontHref}
-              className="text-sm font-bold text-marca-800 underline underline-offset-4"
-            >
-              Abrir a vitrine e pedir online →
-            </Link>
-          ) : null}
-        </div>
-        {sections.length > 0 && menu ? (
-          <MenuList
-            menu={menu}
-            citySlug={city.slug}
-            canOrderOnline={Boolean(storefrontHref)}
-          />
-        ) : menuExterno ? (
-          /*
-           * Sem item publicado, mas com link cadastrado: o texto antigo
-           * ("ainda não publicou um cardápio online") seria mentira — o
-           * cardápio existe, só está em outro lugar.
-           */
-          <div className="mt-4 rounded-card border border-dashed border-borda-forte bg-superficie p-8 text-center">
-            <p className="text-texto-suave">
-              O cardápio desta empresa fica fora do Tudo Agora.
-            </p>
-            <a
-              href={menuExterno}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-4 inline-flex min-h-11 items-center justify-center rounded-pill bg-marca-gradient px-6 text-sm font-bold text-white"
-            >
-              Abrir o cardápio
-            </a>
+      {/*
+        Empresa de serviço não tem seção de cardápio — nem para anunciar um
+        cardápio que nunca foi publicado, nem para empurrar a vitrine. O
+        WhatsApp e o site ficaram nos botões logo abaixo da descrição.
+      */}
+      {!servico ? (
+        <section id="cardapio" className="mt-12 scroll-mt-24">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
+            <h2 className="text-xl font-black tracking-tight text-marca-800">
+              Cardápio
+            </h2>
+            {storefrontHref ? (
+              <Link
+                href={storefrontHref}
+                className="text-sm font-bold text-marca-800 underline underline-offset-4"
+              >
+                Abrir a vitrine e pedir online →
+              </Link>
+            ) : null}
           </div>
-        ) : (
-          <p className="mt-4 rounded-card border border-dashed border-borda-forte bg-superficie p-8 text-center text-texto-suave">
-            Esta empresa ainda não publicou um cardápio online. Fale com ela pelo
-            WhatsApp para ver o cardápio completo.
-          </p>
-        )}
-      </section>
+          {sections.length > 0 && menu ? (
+            <MenuList
+              menu={menu}
+              citySlug={city.slug}
+              canOrderOnline={Boolean(storefrontHref)}
+            />
+          ) : menuExterno ? (
+            /*
+             * Sem item publicado, mas com link cadastrado: o texto antigo
+             * ("ainda não publicou um cardápio online") seria mentira — o
+             * cardápio existe, só está em outro lugar.
+             */
+            <div className="mt-4 rounded-card border border-dashed border-borda-forte bg-superficie p-8 text-center">
+              <p className="text-texto-suave">
+                O cardápio desta empresa fica fora do Tudo Agora.
+              </p>
+              <a
+                href={menuExterno}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-4 inline-flex min-h-11 items-center justify-center rounded-pill bg-marca-gradient px-6 text-sm font-bold text-white"
+              >
+                Abrir o cardápio
+              </a>
+            </div>
+          ) : (
+            <p className="mt-4 rounded-card border border-dashed border-borda-forte bg-superficie p-8 text-center text-texto-suave">
+              Esta empresa ainda não publicou um cardápio online. Fale com ela
+              pelo WhatsApp para ver o cardápio completo.
+            </p>
+          )}
+        </section>
+      ) : null}
     </article>
   );
 }
