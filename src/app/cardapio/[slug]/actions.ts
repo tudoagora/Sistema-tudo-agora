@@ -267,17 +267,15 @@ export async function placeOrder(
           fieldErrors: {},
         };
       }
-      if (group.is_required && count < Math.max(1, group.min_select)) {
+      const minRequired = Math.max(group.min_select, group.is_required ? 1 : 0);
+      if (count < minRequired) {
+        const msg =
+          minRequired === 1
+            ? `Escolha ${group.name} em ${product.name}.`
+            : `Em ${product.name}, escolha ao menos ${minRequired} de "${group.name}".`;
         return {
           code: null,
-          error: `Escolha ${group.name} em ${product.name}.`,
-          fieldErrors: {},
-        };
-      }
-      if (count < group.min_select) {
-        return {
-          code: null,
-          error: `Em ${product.name}, escolha ao menos ${group.min_select} de "${group.name}".`,
+          error: msg,
           fieldErrors: {},
         };
       }

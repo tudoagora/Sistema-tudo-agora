@@ -34,6 +34,8 @@ export type PriceValue = {
 export type PriceGroup = {
   id: number;
   name: string;
+  /** Menor quantidade de valores que o grupo aceita. */
+  min_select: number;
   /** `true` só no grupo "Sabores": preço cheio, combinado pelo mais caro. */
   is_flavor_group: boolean;
   values: PriceValue[];
@@ -90,12 +92,24 @@ export function lineUnitPriceCents(
 /**
  * Preço "a partir de" para o card do produto.
  *
- * Num produto de tamanho o que o cliente vê na vitrine é o menor preço entre os
- * sabores daquele tamanho — "PIZZA GRANDE a partir de R$ 80,00" —, porque o
- * preço final depende do sabor. Sem grupo de sabores, é o preço do produto.
+ * Para grupo de sabores com `min_select > 1`, a escolha obrigatória de N
+ * sabores significa que o preço mínimo possível é o valor mais alto entre os
+ * N sabores mais baratos (regra: paga o sabor mais caro entre os escolhidos).
+ * Para `min_select <= 1`, mantém o menor preço individual.
  */
 export function fromPriceCents(item: PriceItemLike): number {
   const flavorGroup = flavorGroupOf(item);
   if (!flavorGroup || flavorGroup.values.length === 0) return item.price_cents;
-  return Math.min(...flavorGroup.values.map((value) => value.price_delta_cents));
+
+  const precos = flavorGroup.values
+    .map((value) => value.price_delta_cents)
+    .sort((a, b) => a - b);
+
+  // O cliente precisa escolher pelo menos `min_select` sabores e a pizza cobra o
+  // mais caro dos escolhidos. O menor total possível é, portanto, o preço do
+  // N-ésimo mais barato: é o sabor mais caro dentro do conjunto dos N mais
+  // baratos. Com `min_select = 1` isso é o sabor mais barato, como sempre foi.
+  const minimo = Math.max(Math.floor(flavorGroup.min_select || 0), 1);
+  const quantos = Math.min(minimo, precos.length);
+  return precos[quantos - 1];
 }

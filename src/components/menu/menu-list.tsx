@@ -4,19 +4,16 @@ import { useMemo, useState } from "react";
 
 import type { Menu, MenuItem } from "@/lib/catalog";
 import { formatBRL } from "@/lib/format";
+import {
+  faixaLabel,
+  grupoCheio,
+  minimoDe,
+  quantosFaltam,
+  toggleValue,
+  type Selection,
+} from "@/lib/menu/selection";
 import { lineUnitPriceCents } from "@/lib/pricing";
 import { cn } from "@/lib/utils";
-
-type Selection = Record<number, number[]>;
-
-function toggle(selection: Selection, groupId: number, valueId: number, max: number) {
-  const current = selection[groupId] ?? [];
-  if (current.includes(valueId)) {
-    return { ...selection, [groupId]: current.filter((id) => id !== valueId) };
-  }
-  const next = max <= 1 ? [valueId] : [...current, valueId].slice(-max);
-  return { ...selection, [groupId]: next };
-}
 
 export function MenuList({
   menu,
@@ -165,37 +162,50 @@ function MenuGroup({
                 <div className="space-y-4 border-t border-borda bg-superficie p-4">
                   {groups.map((group) => {
                     const selected = selection[group.id] ?? [];
+                    const faltam = quantosFaltam(group, selection);
+                    const cheio = grupoCheio(group, selection);
                     return (
                       <fieldset key={group.id}>
                         <legend className="text-xs font-bold uppercase tracking-wide text-texto-tenue">
                           {group.name}
-                          {group.max_select > 1
-                            ? ` (até ${group.max_select})`
-                            : ""}
+                          {group.is_required ? " · obrigatório" : ""}
+                          {faixaLabel(group) ? ` · ${faixaLabel(group)}` : ""}
+                          {minimoDe(group) > 0 ? ` · ${selected.length}/${group.max_select}` : ""}
                         </legend>
+                        {faltam > 0 ? (
+                          <p className="mt-1 text-xs font-bold text-erro-700">
+                            {minimoDe(group) > 1
+                              ? `Faltam ${faltam} de "${group.name}"`
+                              : `Escolha ${group.name}`}
+                          </p>
+                        ) : null}
                         <div className="mt-2 flex flex-wrap gap-2">
                           {group.values.map((value) => {
                             const active = selected.includes(value.id);
+                            const travado = cheio && !active;
                             return (
                               <button
                                 key={value.id}
                                 type="button"
                                 aria-pressed={active}
+                                aria-disabled={travado}
                                 onClick={() =>
-                                  setSelection((prev) =>
-                                    toggle(
-                                      prev,
-                                      group.id,
-                                      value.id,
-                                      group.max_select,
-                                    ),
-                                  )
+                                  setSelection((prev) => {
+                                    const atual = prev[group.id] ?? [];
+                                    const next = toggleValue(atual, group, value.id);
+                                    if (next === atual) return prev;
+                                    return { ...prev, [group.id]: next };
+                                  })
                                 }
                                 className={cn(
                                   "min-h-11 rounded-pill border px-3.5 text-xs font-semibold transition-colors",
                                   active
                                     ? "border-marca-800 bg-marca-800 text-white"
                                     : "border-borda-forte bg-white text-texto-suave hover:border-marca-600",
+                                  // Grupo cheio: as opções livres ficam esmaecidas
+                                  // porque tocá-las não muda nada agora.
+                                  travado &&
+                                    "opacity-45 hover:border-borda-forte",
                                 )}
                               >
                                 {value.name}

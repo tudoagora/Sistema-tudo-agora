@@ -19,6 +19,12 @@ import {
 } from "@/lib/format";
 import { availablePayments } from "@/lib/order";
 import {
+  faltandoLabels,
+  faixaLabel,
+  gruposIncompletos,
+  toggleValue,
+} from "@/lib/menu/selection";
+import {
   flavorGroupOf,
   fromPriceCents,
   lineUnitPriceCents,
@@ -147,19 +153,17 @@ function unitPrice(line: Line): number {
   return lineUnitPriceCents(line.item, line.selection);
 }
 
+/**
+ * Ids dos grupos com escolha insuficiente.
+ *
+ * Só os ids interessam para o desenho (borda de erro, botão travado); o texto
+ * que o cliente lê vem de `faltandoLabels`, que sabe quantos faltam.
+ */
 function missingChoices(
   item: StoreItem,
   selection: Record<number, number[]>,
-) {
-  const missing: string[] = [];
-  for (const group of item.option_groups) {
-    // `is_required` com `min_select = 0` é um grupo que precisa de ao menos
-    // uma escolha — o rótulo "obrigatório" já avisa isso na tela. O grupo de
-    // sabores cai aqui também: mín 1 obriga escolher ao menos um sabor.
-    const minimo = Math.max(group.min_select, group.is_required ? 1 : 0);
-    if ((selection[group.id] ?? []).length < minimo) missing.push(group.name);
-  }
-  return missing;
+): number[] {
+  return gruposIncompletos(item.option_groups, selection);
 }
 
 /** Preço de uma escolha ainda no rascunho, para mostrar antes de adicionar. */
@@ -318,12 +322,11 @@ export function Storefront({
   function toggleDraft(item: StoreItem, group: OptionGroup, valueId: number) {
     setDrafts((current) => {
       const forItem = current[item.id] ?? {};
-      const ids = forItem[group.id] ?? [];
-      const next = ids.includes(valueId)
-        ? ids.filter((id) => id !== valueId)
-        : ids.length < group.max_select
-          ? [...ids, valueId]
-          : [valueId];
+      const atual = forItem[group.id] ?? [];
+      // Mesmo array de volta = o grupo está cheio e o valor não estava marcado,
+      // então não há o que guardar.
+      const next = toggleValue(atual, group, valueId);
+      if (next === atual) return current;
       return { ...current, [item.id]: { ...forItem, [group.id]: next } };
     });
   }
@@ -1001,7 +1004,11 @@ function ItemModal({
         <div className="flex-1 space-y-4 overflow-y-auto bg-superficie p-4">
           {item.option_groups.map((group) => {
             const ids = selection[group.id] ?? [];
-            const falta = missing.includes(group.name);
+            const falta = missing.includes(group.id);
+            // Grupo no limite: as opções livres ficam esmaecidas e recebem
+            // `aria-disabled`, porque tocá-las não muda nada agora (ver
+            // `toggleDraft`). Sem esse sinal o cliente lê o clique como falha.
+            const cheio = ids.length >= group.max_select;
             // No grupo de sabores cada valor mostra o PREÇO CHEIO daquele
             // sabor (não um acréscimo), e a pizza cobra o mais caro entre os
             // escolhidos. Nos demais grupos o valor é um acréscimo (+R$ …).
@@ -1019,15 +1026,24 @@ function ItemModal({
                   {group.name}
                   {group.is_required ? (
                     <span className="ml-1 text-erro-700">obrigatório</span>
-                  ) : group.min_select > 0 ? (
+                  ) : null}
+                  {faixaLabel(group) ? (
                     <span className="ml-1 font-normal text-texto-tenue">
-                      escolha {group.min_select} a {group.max_select}
+                      {faixaLabel(group)}
                     </span>
-                  ) : (
-                    <span className="ml-1 font-normal text-texto-tenue">
-                      até {group.max_select}
+                  ) : null}
+                  {group.min_select > 1 || group.max_select > 1 ? (
+                    // Só faz sentido contagem em grupo com faixa: com uma escolha
+                    // só, o próprio destaque da pílula já diz o suficiente.
+                    <span
+                      className={cn(
+                        "ml-1 font-black tabular-nums",
+                        cheio ? "text-marca-600" : "text-texto-suave",
+                      )}
+                    >
+                      {ids.length}/{group.max_select}
                     </span>
-                  )}
+                  ) : null}
                   {sabores ? (
                     <span className="ml-1 font-normal text-marca-600">
                       · paga o mais caro
@@ -1037,12 +1053,14 @@ function ItemModal({
                 <ul className={emLinha ? "mt-2 space-y-2" : "mt-2 flex flex-wrap gap-2"}>
                   {group.values.map((value) => {
                     const marcado = ids.includes(value.id);
+                    const travado = cheio && !marcado;
                     return (
                       <li key={value.id} className={emLinha ? "w-full" : undefined}>
                         <button
                           type="button"
                           onClick={() => onSelect(group, value.id)}
                           aria-pressed={marcado}
+                          aria-disabled={travado}
                           className={cn(
                             "text-xs font-semibold transition-colors",
                             emLinha
@@ -1064,6 +1082,12 @@ function ItemModal({
                               : cn(
                                   "border-borda-forte bg-white text-texto-forte hover:border-marca-600",
                                   falta && "border-erro/50",
+                                  // Esmaecido, não desabilitado de verdade: o botão
+                                  // continua focável e announces, o que explica o
+                                  // grupo cheio melhor do que sumir da fila de
+                                  // tabulação. Para o mouse, o clique é ignorado em
+                                  // `toggleDraft`.
+                                  travado && "opacity-45 hover:border-borda-forte",
                                 ),
                           )}
                         >
@@ -1132,7 +1156,8 @@ function ItemModal({
         <div className="shrink-0 space-y-2 border-t border-borda bg-white p-4">
           {missing.length > 0 ? (
             <p role="status" className="text-xs font-bold text-erro-700">
-              Escolha {missing.join(" e ")} para continuar.
+              Escolha {faltandoLabels(item.option_groups, selection).join(" e ")} para
+              continuar.
             </p>
           ) : null}
           <button
@@ -1299,7 +1324,8 @@ function Review({
                   ) : null}
                   {missing.length > 0 ? (
                     <p role="alert" className="mt-1 text-xs font-bold text-erro-700">
-                      Falta escolher: {missing.join(", ")}
+                      Falta escolher:{" "}
+                      {faltandoLabels(line.item.option_groups, line.selection).join(", ")}
                     </p>
                   ) : null}
                 </div>
